@@ -34,7 +34,7 @@ options.register('copyInputsToLocal', True, VarParsing.multiplicity.singleton, V
                  "Copy inputs (one at the time) to a job working directory before processing them.")
 options.register('inputDBS', 'global', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "DBS instance")
-options.register('PFNSprefix', 'global', VarParsing.multiplicity.singleton, VarParsing.varType.string,
+options.register('PFNSprefix', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Custom pfns prefix for input files")
 options.register('output', 'nano.root', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Name of the output file.")
