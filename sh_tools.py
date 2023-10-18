@@ -223,6 +223,19 @@ def gfal_copy(input_remote_file, output_local_file, voms_token, number_of_stream
   repeat_until_success(download, raise_error=True, error_message=f'Unable to copy {input_remote_file} from remote.',
                        n_retries=n_retries, retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
+def gfal_ls_recursive(path, fileName):
+  _, output, _ = sh_call(['gfal-ls', '-t 7200', path,],
+                         shell=False, env={'X509_USER_PROXY': get_voms_proxy_info()['path']}, catch_stdout=True, verbose=0)
+  output = [o for o in output.strip().split("\n")]
+  outputFiles = []
+  for o in output:
+    if not o.endswith(".tar"):
+      outputFiles.extend(gfal_ls_recursive(os.path.join(path, o), fileName))
+    else:
+      if o == fileName:
+        outputFiles.append(os.path.join(path, o))
+  return outputFiles
+
 def das_file_site_info(file, inputDBS='global', verbose=0):
   query = f'site file={file}'
   if inputDBS != 'global':

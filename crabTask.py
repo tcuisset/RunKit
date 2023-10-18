@@ -14,7 +14,7 @@ if __name__ == "__main__":
   __package__ = 'RunKit'
 
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
-from .sh_tools import ShCallError, sh_call, natural_sort, get_voms_proxy_info
+from .sh_tools import ShCallError, sh_call, natural_sort, get_voms_proxy_info, gfal_copy, gfal_ls_recursive
 from .envToJson import get_cmsenv
 
 class Task:
@@ -22,7 +22,7 @@ class Task:
     'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'outputFiles', 'filesToTransfer', 'site',
     'crabOutput', 'localCrabOutput', 'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
     'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun', 'finalOutput',
-    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType'
+    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType', 'tmp_area'
   ]
 
   _taskCfgPrivateProperties = [
@@ -77,6 +77,7 @@ class Task:
     self.gridJobs = None
     self.crabType = ''
     self.processedFilesCache = None
+    self.tmp_area = ''
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
@@ -390,19 +391,7 @@ class Task:
             filePath = os.path.join(root, file)
             outputFiles.append(filePath)
     else:
-      def RecursiveGfal(path, fileName):
-        _, output, _ = sh_call(['gfal-ls', '-t 7200', path,],
-                               shell=False, env={'X509_USER_PROXY': get_voms_proxy_info()['path']}, catch_stdout=True, verbose=0)
-        output = [o for o in output.strip().split("\n")]
-        outputFiles = []
-        for o in output:
-          if not o.endswith(".tar"):
-            outputFiles.extend(RecursiveGfal(os.path.join(path, o), fileName))
-          else:
-            if o == fileName:
-              outputFiles.append(os.path.join(path, o))
-        return outputFiles
-      outputFiles = RecursiveGfal(taskOutput, fileName)
+      outputFiles = gfal_ls_recursive(taskOutput, fileName)
     if len(outputFiles) == 0:
       raise RuntimeError(f'{self.name}: unable to find output for jobId={jobId} outputName={outputName}' + \
                          f' in {taskOutput}')
@@ -412,10 +401,10 @@ class Task:
     return outputFiles[0]
 
   def getTarFileFromGfal(self, outputFile):
-    tempdir = os.path.join(os.environ['TMPDIR'], outputFile.split("/")[-1])
-    sh_call(['gfal-copy', '-n 2', '-t 7200', outputFile, tempdir,],
-            shell=False, env={'X509_USER_PROXY': get_voms_proxy_info()['path']}, verbose=0)
-    return tempdir
+    tempdir = os.environ['TMPDIR'] if self.tmp_area == 'TMPDIR' else self.tmp_area
+    temp_root = os.path.join(tempdir, outputFile.split("/")[-1])
+    gfal_copy(outputFile, temp_root, get_voms_proxy_info()['path'], verbose=0)
+    return temp_root
 
   def getProcessedFilesFromTar(self, outputFile):
     outputName, outputExt = os.path.splitext(self.outputFiles[0])
