@@ -41,7 +41,7 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
         customise_file = customise_path[2] + '.py'
         customise_file_path = os.path.join(customise_dir, customise_file)
         if not os.path.exists(customise_file_path):
-          sandbox_file = module_path = os.path.join(os.path.dirname(__file__), customise_path[2] + '.py')
+          sandbox_file = os.path.join(os.path.dirname(__file__), customise_path[2] + '.py')
           if os.path.exists(sandbox_file):
             os.makedirs(customise_dir, exist_ok=True)
             shutil.copy(sandbox_file, customise_file_path)
