@@ -223,6 +223,19 @@ def gfal_copy(input_remote_file, output_local_file, voms_token, number_of_stream
   repeat_until_success(download, raise_error=True, error_message=f'Unable to copy {input_remote_file} from remote.',
                        n_retries=n_retries, retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
+def gfal_ls_recursive(path, fileName):
+  _, output, _ = sh_call(['gfal-ls', '-t 7200', path,],
+                         shell=False, env={'X509_USER_PROXY': get_voms_proxy_info()['path']}, catch_stdout=True, verbose=0)
+  output = [o for o in output.strip().split("\n")]
+  outputFiles = []
+  for o in output:
+    if not o.endswith(".tar"):
+      outputFiles.extend(gfal_ls_recursive(os.path.join(path, o), fileName))
+    else:
+      if o == fileName:
+        outputFiles.append(os.path.join(path, o))
+  return outputFiles
+
 def das_file_site_info(file, inputDBS='global', verbose=0):
   query = f'site file={file}'
   if inputDBS != 'global':
@@ -257,7 +270,7 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global',
   return pfns
 
 def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_retries=4, retry_sleep_interval=10,
-                     custom_pfns_prefix=None, verbose=1):
+                     custom_pfns_prefix='', verbose=1):
   pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=False, return_adler32=True, inputDBS=inputDBS,
                                      verbose=verbose)
   if os.path.exists(output_local_file):
@@ -267,7 +280,7 @@ def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_
 
   if len(pfns_list) == 0:
     if input_remote_file.startswith('/store/'):
-      if custom_pfns_prefix != None:
+      if custom_pfns_prefix != '':
         pfns_list = [custom_pfns_prefix+input_remote_file, input_remote_file]
       else:
         pfns_list = [input_remote_file]

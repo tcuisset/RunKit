@@ -14,7 +14,7 @@ if __name__ == "__main__":
   __package__ = 'RunKit'
 
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
-from .sh_tools import ShCallError, sh_call, natural_sort
+from .sh_tools import ShCallError, sh_call, natural_sort, get_voms_proxy_info, gfal_copy, gfal_ls_recursive
 from .envToJson import get_cmsenv
 
 class Task:
@@ -22,7 +22,7 @@ class Task:
     'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'outputFiles', 'filesToTransfer', 'site',
     'crabOutput', 'localCrabOutput', 'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
     'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun', 'finalOutput',
-    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType'
+    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType', 'tmp_area'
   ]
 
   _taskCfgPrivateProperties = [
@@ -77,6 +77,7 @@ class Task:
     self.gridJobs = None
     self.crabType = ''
     self.processedFilesCache = None
+    self.tmp_area = ''
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
@@ -383,11 +384,14 @@ class Task:
     outputName, outputExt = os.path.splitext(self.getCrabJobOutput())
     fileName = f'{outputName}_{jobId}{outputExt}'
     outputFiles = []
-    for root, dirs, files in os.walk(taskOutput):
-      for file in files:
-        if file == fileName:
-          filePath = os.path.join(root, file)
-          outputFiles.append(filePath)
+    if taskOutput.startswith("/"):
+      for root, dirs, files in os.walk(taskOutput):
+        for file in files:
+          if file == fileName:
+            filePath = os.path.join(root, file)
+            outputFiles.append(filePath)
+    else:
+      outputFiles = gfal_ls_recursive(taskOutput, fileName)
     if len(outputFiles) == 0:
       raise RuntimeError(f'{self.name}: unable to find output for jobId={jobId} outputName={outputName}' + \
                          f' in {taskOutput}')
@@ -396,9 +400,19 @@ class Task:
                          f' in {taskOutput}: ' + ' '.join(outputFiles))
     return outputFiles[0]
 
+  def getTarFileFromGfal(self, outputFile):
+    tempdir = os.environ['TMPDIR'] if self.tmp_area == 'TMPDIR' else self.tmp_area
+    temp_root = os.path.join(tempdir, outputFile.split("/")[-1])
+    gfal_copy(outputFile, temp_root, get_voms_proxy_info()['path'], verbose=0)
+    return temp_root
+
   def getProcessedFilesFromTar(self, outputFile):
     outputName, outputExt = os.path.splitext(self.outputFiles[0])
     files = {}
+    nonLocal = False
+    if not outputFile.startswith("/"):
+      outputFile = self.getTarFileFromGfal(outputFile)
+      nonLocal = True
     with tarfile.open(outputFile, 'r') as tar:
       files_in_tar = tar.getnames()
       for file_in_tar in files_in_tar:
@@ -408,6 +422,8 @@ class Task:
           if file in files:
             raise RuntimeError(f'{self.name}: duplicated file {file} in {outputFile}')
           files[file] = file_id
+    if nonLocal:
+      sh_call(['rm', outputFile,], shell=False, verbose=0)
     return files
 
   def getPostProcessList(self):
@@ -438,6 +454,10 @@ class Task:
       tarFiles = json.load(f)
     for tarFile, packedFiles in tarFiles.items():
       print(tarFile)
+      nonLocal = False
+      if not tarFile.startswith("/"):
+        tarFile = self.getTarFileFromGfal(tarFile)
+        nonLocal = True
       with tarfile.open(tarFile, 'r') as tar:
         for _, packedFileId in packedFiles:
           packedFile = f'{outputName}_{packedFileId}{outputExt}'
@@ -462,6 +482,8 @@ class Task:
                 print(f'failed (attempt {try_idx+1}/{max_tries})')
                 time.sleep(try_delay)
           unpackedFiles.append(os.path.join(outputDir, packedFile))
+      if nonLocal:
+        sh_call(['rm', tarFile,], shell=False, verbose=0)
     unpackedList = self.getPostProcessList() + f'.{outputName}.unpacked'
     with open(unpackedList, 'w') as f:
       for file in unpackedFiles:
