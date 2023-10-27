@@ -74,6 +74,7 @@ class Task:
     self.taskIds = {}
     self.lastJobStatusUpdate = -1.
     self.cmsswEnv = None
+    self.singularity_cmd = os.environ.get('CMSSW_SINGULARITY', None)
     self.gridJobs = None
     self.crabType = ''
     self.processedFilesCache = None
@@ -195,6 +196,8 @@ class Task:
       self.cmsswEnv = get_cmsenv(cmssw_path, crab_env=True, crab_type=self.crabType)
       self.cmsswEnv['X509_USER_PROXY'] = os.environ['X509_USER_PROXY']
       self.cmsswEnv['HOME'] = os.environ['HOME'] if 'HOME' in os.environ else self.workArea
+      if 'KRB5CCNAME' in os.environ:
+        self.cmsswEnv['KRB5CCNAME'] = os.environ['KRB5CCNAME']
     return self.cmsswEnv
 
   def getDatasetFilesPath(self):
@@ -232,7 +235,7 @@ class Task:
               query += f' instance=prod/{self.inputDBS}'
             _,output,_ = sh_call(['dasgoclient', '--query', query],
                                 catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
-                                env=self.getCmsswEnv())
+                                env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
             self.datasetFiles = {}
             all_files = []
             for file in output:
@@ -265,7 +268,7 @@ class Task:
 
       def getDasInfo(cmd):
         _,output,_ = sh_call(cmd, catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
-                             env=self.getCmsswEnv())
+                             env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
         descs = []
         for desc in output:
           desc = desc.strip()
@@ -542,7 +545,8 @@ class Task:
         print(f'{self.name}: submitting ...')
       try:
         timeout = None if self.dryrun else Task.crabOperationTimeout
-        sh_call(['python3', crabSubmitPath, self.workArea], timeout=timeout, env=self.getCmsswEnv())
+        sh_call(['python3', crabSubmitPath, self.workArea], timeout=timeout, env=self.getCmsswEnv(),
+                singularity_cmd=self.singularity_cmd)
         self.taskStatus.status = Status.Submitted
         self.saveStatus()
       except ShCallError as e:
@@ -576,7 +580,7 @@ class Task:
     else:
       returncode, output, err = sh_call(['crab', 'status', '--json', '-d', self.crabArea()],
                                         catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout,
-                                        env=self.getCmsswEnv())
+                                        env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
       self.taskStatus = LogEntryParser.Parse(output)
       self.saveStatus()
       with open(self.lastCrabStatusLog(), 'w') as f:
@@ -690,9 +694,10 @@ class Task:
     if len(file_list) > 0:
       file_list = ','.join(file_list)
       cmd.append(f'inputFiles={file_list}')
-      sh_call(cmd, cwd=job_home, env=self.getCmsswEnv())
+      sh_call(cmd, cwd=job_home, env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
       _, scriptName = os.path.split(self.scriptExe)
-      sh_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv())
+      sh_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv(),
+              singularity_cmd=self.singularity_cmd)
     else:
       tar = tarfile.open(job_output, 'w')
       tar.close()
@@ -710,7 +715,8 @@ class Task:
     if self.isInLocalRunMode():
       print(f'{self.name}: cannot kill a task with local jobs.')
     else:
-      sh_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv())
+      sh_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv(),
+              singularity_cmd=self.singularity_cmd)
 
   def getProcessedFiles(self, lastRecoveryIndex=None):
     if lastRecoveryIndex is None:

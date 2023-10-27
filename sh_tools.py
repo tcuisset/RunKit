@@ -23,9 +23,18 @@ class ShCallError(RuntimeError):
     self.message = additional_message
 
 def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=True, split=None, print_output=False,
-            expected_return_codes=[0], env=None, cwd=None, timeout=None, verbose=0):
+            expected_return_codes=[0], env=None, cwd=None, timeout=None, singularity_cmd=None, verbose=0):
+  if singularity_cmd is not None:
+    full_cmd = [ singularity_cmd, '--command-to-run' ]
+    if env is not None:
+      full_cmd.extend([ 'env', '-i' ])
+      for key, value in env.items():
+        full_cmd.append(f'{key}={value}')
+    full_cmd.extend(cmd)
+  else:
+    full_cmd = cmd
   cmd_str = []
-  for s in cmd:
+  for s in full_cmd:
     if ' ' in s:
       s = f"'{s}'"
     cmd_str.append(s)
@@ -58,7 +67,7 @@ def sh_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
         kill_proc(child_pid)
     subprocess.run(['kill', '-9', str(pid)], capture_output=True)
 
-  proc = subprocess.Popen(cmd, **kwargs)
+  proc = subprocess.Popen(full_cmd, **kwargs)
   def kill_main_proc():
     print(f'\nTimeout is reached while running:\n\t{cmd_str}', file=sys.stderr)
     print(f'Killing process tree...', file=sys.stderr)
