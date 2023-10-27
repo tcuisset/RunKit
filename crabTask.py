@@ -16,6 +16,7 @@ if __name__ == "__main__":
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
 from .sh_tools import ShCallError, sh_call, natural_sort, get_voms_proxy_info, gfal_copy, gfal_ls_recursive
 from .envToJson import get_cmsenv
+from .getFileRunLumi import getFileRunLumi
 
 class Task:
   _taskCfgProperties = [
@@ -206,44 +207,27 @@ class Task:
   def getDatasetFiles(self):
     if self.datasetFiles is None:
       datasetFilesPath = self.getDatasetFilesPath()
-      fileRunLumiPath = os.path.join(self.workArea, 'file_run_lumi.json')
       if os.path.exists(datasetFilesPath):
         with open(datasetFilesPath, 'r') as f:
           self.datasetFiles = json.load(f)
       else:
-        if os.path.exists(fileRunLumiPath):
+        if self.isInputDatasetLocal():
+          print(f'{self.name}: Gathering dataset files ...')
+          ds_path = self.inputDataset[len('local:'):]
+          if not os.path.exists(ds_path):
+            raise RuntimeError(f'{self.name}: unable to find local dataset path "{ds_path}"')
+          self.datasetFiles = {}
+          all_files = []
+          for subdir, dirs, files in os.walk(ds_path):
+            for file in files:
+              if file.endswith('.root') and not file.startswith('.'):
+                all_files.append('file:' + os.path.join(subdir, file))
+          for file_id, file_path in enumerate(natural_sort(all_files)):
+            self.datasetFiles[file_path] = file_id
+        else:
           self.datasetFiles = {}
           for file_id, file in enumerate(natural_sort(self.getFileRunLumi().keys())):
             self.datasetFiles[file] = file_id
-        else:
-          print(f'{self.name}: Gathering dataset files ...')
-          if self.isInputDatasetLocal():
-            ds_path = self.inputDataset[len('local:'):]
-            if not os.path.exists(ds_path):
-              raise RuntimeError(f'{self.name}: unable to find local dataset path "{ds_path}"')
-            self.datasetFiles = {}
-            all_files = []
-            for subdir, dirs, files in os.walk(ds_path):
-              for file in files:
-                if file.endswith('.root') and not file.startswith('.'):
-                  all_files.append('file:' + os.path.join(subdir, file))
-            for file_id, file_path in enumerate(natural_sort(all_files)):
-              self.datasetFiles[file_path] = file_id
-          else:
-            query = f'file dataset={self.inputDataset}'
-            if self.inputDBS != 'global':
-              query += f' instance=prod/{self.inputDBS}'
-            _,output,_ = sh_call(['dasgoclient', '--query', query],
-                                catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
-                                env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
-            self.datasetFiles = {}
-            all_files = []
-            for file in output:
-              file = file.strip()
-              if len(file) > 0:
-                all_files.append(file)
-            for file_id, file in enumerate(natural_sort(all_files)):
-              self.datasetFiles[file] = file_id
         with open(datasetFilesPath, 'w') as f:
           json.dump(self.datasetFiles, f, indent=2)
       if len(self.datasetFiles) == 0:
@@ -261,43 +245,11 @@ class Task:
   def getFileRunLumi(self):
     if self.fileRunLumi is None:
       fileRunLumiPath = os.path.join(self.workArea, 'file_run_lumi.json')
-      cmdBase = ['dasgoclient', '--query']
-      allRuns = f'file,run,lumi dataset={self.inputDataset}'
-      if self.inputDBS != 'global':
-        allRuns += f' instance=prod/{self.inputDBS}'
-
-      def getDasInfo(cmd):
-        _,output,_ = sh_call(cmd, catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
-                             env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
-        descs = []
-        for desc in output:
-          desc = desc.strip()
-          if len(desc) > 0:
-            split_desc = desc.split(' ')
-            if len(split_desc) != 3:
-              raise RuntimeError(f'Bad file,run,lumi format in "{desc}"')
-            descs.append([split_desc[0], json.loads(split_desc[1]), json.loads(split_desc[2])])
-        return descs
 
       if not os.path.exists(fileRunLumiPath):
         print(f'{self.name}: Gathering file->(run,lumi) correspondance ...')
-        self.fileRunLumi = {}
-        for file, runs, lumis in getDasInfo(cmdBase + [allRuns]):
-          if type(lumis) != list:
-            raise RuntimeError(f'Unexpected lumis type for "{file}"')
-          if type(runs) == int or len(runs) == 1:
-            run = runs if type(runs) == int else runs[0]
-            self.fileRunLumi[file] = { run: lumis }
-          elif len(runs) == 0:
-            raise RuntimeError(f'Empty runs for {file}.')
-          else:
-            self.fileRunLumi[file] = { }
-            for run in runs:
-              runRequest = allRuns + f' run={run}'
-              for runFile, runRuns, runLumis in getDasInfo(cmdBase + [runRequest]):
-                if runFile == file:
-                  self.fileRunLumi[file][run] = runLumis
-                  break
+        self.fileRunLumi = getFileRunLumi(self.inputDataset, inputDBS=self.inputDBS,
+                                          dasOperationTimeout=Task.dasOperationTimeout)
         with open(fileRunLumiPath, 'w') as f:
           json.dump(self.fileRunLumi, f, indent=2)
       else:
