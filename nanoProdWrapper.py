@@ -83,6 +83,24 @@ process.options = cms.untracked.PSet(wantSummary = cms.untracked.bool(False))
 process.maxEvents = cms.untracked.PSet(input = cms.untracked.int32(-1))
 if options.maxEvents > 0:
   process.maxEvents.input = options.maxEvents
+
+if len(options.skimCfg) > 0:
+  import yaml
+  with open(options.skimCfg, 'r') as f:
+    skim_config = yaml.safe_load(f)
+    if len(options.skimSetup) == 0:
+      raise RuntimeError(f'skimCfg={options.skimCfg}, but skimSetup is not specified.')
+    if len(options.skimSetup) == 0 or options.skimSetup not in skim_config:
+      raise RuntimeError(f'Setup "{options.skimSetup}" not found in skimCfg={options.skimCfg}.')
+    if options.storeFailed:
+      if len(options.skimSetupFailed):
+        raise RuntimeError(f"skimCfg={options.sckimCfg} and storeFailed=True, but skimSetupFailed is not specified.")
+      if options.skimSetupFailed not in skim_config:
+        raise RuntimeError(f"Setup {options.skimSetupFailed} not found in skimCfg={options.skimCfg}.")
+else:
+  if len(options.skimSetup) > 0 or len(options.skimSetupFailed) > 0:
+    raise RuntimeError(f"Skim setup can not be specified without a skim configuration file.")
+
 process.exParams = cms.untracked.PSet(
   sampleType = cms.untracked.string(options.sampleType),
   era = cms.untracked.string(era_str + era_mod),
