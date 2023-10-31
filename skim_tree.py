@@ -230,7 +230,7 @@ if __name__ == "__main__":
   parser.add_argument('--output-range', required=False, type=str, default=None,
                       help="write only entries in range begin:end (after all selections)")
   parser.add_argument('--update-output', action="store_true", help="Update output file instead of overriding it.")
-  parser.add_argument('--verbose', required=False, type=int, default=3, help="number of threads")
+  parser.add_argument('--verbose', required=False, type=int, default=3, help="verbosity level")
   args = parser.parse_args()
 
   all_inputs = []

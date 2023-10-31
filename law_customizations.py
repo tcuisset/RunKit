@@ -20,7 +20,6 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
                                         description="maximum runtime, default unit is hours")
     n_cpus = luigi.IntParameter(default=1, description="number of cpus")
     requirements = luigi.Parameter(default='')
-    #requirements = luigi.Parameter(default='( (OpSysAndVer =?= "CentOS7") || (OpSysAndVer =?= "CentOS8") )')
     bootstrap_path = luigi.Parameter()
     log_path = luigi.Parameter(default='')
     sub_dir = luigi.Parameter()

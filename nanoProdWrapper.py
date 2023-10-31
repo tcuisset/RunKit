@@ -50,8 +50,8 @@ cond_mc = {
   'Run2_2016': 'auto:run2_mc',
   'Run2_2017': 'auto:phase1_2017_realistic',
   'Run2_2018': 'auto:phase1_2018_realistic',
-  'Run3_2022': '126X_mcRun3_2022_realistic_v2',
-  'Run3_2022EE': '126X_mcRun3_2022_realistic_postEE_v1',
+  'Run3_2022': '130X_mcRun3_2022_realistic_v5',
+  'Run3_2022EE': '130X_mcRun3_2022_realistic_postEE_v6',
 }
 
 if options.era.startswith('Run2'):
@@ -60,8 +60,8 @@ if options.era.startswith('Run2'):
   era_mod = ',run2_nanoAOD_106Xv2'
 elif options.era.startswith('Run3'):
   cond_data_run3 = {
-    'Run3_2022CDE': '124X_dataRun3_v14',
-    'Run3_2022FG': '124X_dataRun3_Prompt_v10',
+    'Run3_2022CDE': '130X_dataRun3_v2',
+    'Run3_2022FG': '130X_dataRun3_PromptAnalysis_v1',
   }
   if options.sampleType == 'data':
     cond_data = cond_data_run3[options.era]
@@ -83,6 +83,24 @@ process.options = cms.untracked.PSet(wantSummary = cms.untracked.bool(False))
 process.maxEvents = cms.untracked.PSet(input = cms.untracked.int32(-1))
 if options.maxEvents > 0:
   process.maxEvents.input = options.maxEvents
+
+if len(options.skimCfg) > 0:
+  import yaml
+  with open(options.skimCfg, 'r') as f:
+    skim_config = yaml.safe_load(f)
+    if len(options.skimSetup) == 0:
+      raise RuntimeError(f'skimCfg={options.skimCfg}, but skimSetup is not specified.')
+    if len(options.skimSetup) == 0 or options.skimSetup not in skim_config:
+      raise RuntimeError(f'Setup "{options.skimSetup}" not found in skimCfg={options.skimCfg}.')
+    if options.storeFailed:
+      if len(options.skimSetupFailed):
+        raise RuntimeError(f"skimCfg={options.sckimCfg} and storeFailed=True, but skimSetupFailed is not specified.")
+      if options.skimSetupFailed not in skim_config:
+        raise RuntimeError(f"Setup {options.skimSetupFailed} not found in skimCfg={options.skimCfg}.")
+else:
+  if len(options.skimSetup) > 0 or len(options.skimSetupFailed) > 0:
+    raise RuntimeError(f"Skim setup can not be specified without a skim configuration file.")
+
 process.exParams = cms.untracked.PSet(
   sampleType = cms.untracked.string(options.sampleType),
   era = cms.untracked.string(era_str + era_mod),

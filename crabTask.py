@@ -16,6 +16,7 @@ if __name__ == "__main__":
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
 from .sh_tools import ShCallError, sh_call, natural_sort, get_voms_proxy_info, gfal_copy, gfal_ls_recursive
 from .envToJson import get_cmsenv
+from .getFileRunLumi import getFileRunLumi
 
 class Task:
   _taskCfgProperties = [
@@ -74,6 +75,7 @@ class Task:
     self.taskIds = {}
     self.lastJobStatusUpdate = -1.
     self.cmsswEnv = None
+    self.singularity_cmd = os.environ.get('CMSSW_SINGULARITY', None)
     self.gridJobs = None
     self.crabType = ''
     self.processedFilesCache = None
@@ -195,6 +197,8 @@ class Task:
       self.cmsswEnv = get_cmsenv(cmssw_path, crab_env=True, crab_type=self.crabType)
       self.cmsswEnv['X509_USER_PROXY'] = os.environ['X509_USER_PROXY']
       self.cmsswEnv['HOME'] = os.environ['HOME'] if 'HOME' in os.environ else self.workArea
+      if 'KRB5CCNAME' in os.environ:
+        self.cmsswEnv['KRB5CCNAME'] = os.environ['KRB5CCNAME']
     return self.cmsswEnv
 
   def getDatasetFilesPath(self):
@@ -203,44 +207,27 @@ class Task:
   def getDatasetFiles(self):
     if self.datasetFiles is None:
       datasetFilesPath = self.getDatasetFilesPath()
-      fileRunLumiPath = os.path.join(self.workArea, 'file_run_lumi.json')
       if os.path.exists(datasetFilesPath):
         with open(datasetFilesPath, 'r') as f:
           self.datasetFiles = json.load(f)
       else:
-        if os.path.exists(fileRunLumiPath):
+        if self.isInputDatasetLocal():
+          print(f'{self.name}: Gathering dataset files ...')
+          ds_path = self.inputDataset[len('local:'):]
+          if not os.path.exists(ds_path):
+            raise RuntimeError(f'{self.name}: unable to find local dataset path "{ds_path}"')
+          self.datasetFiles = {}
+          all_files = []
+          for subdir, dirs, files in os.walk(ds_path):
+            for file in files:
+              if file.endswith('.root') and not file.startswith('.'):
+                all_files.append('file:' + os.path.join(subdir, file))
+          for file_id, file_path in enumerate(natural_sort(all_files)):
+            self.datasetFiles[file_path] = file_id
+        else:
           self.datasetFiles = {}
           for file_id, file in enumerate(natural_sort(self.getFileRunLumi().keys())):
             self.datasetFiles[file] = file_id
-        else:
-          print(f'{self.name}: Gathering dataset files ...')
-          if self.isInputDatasetLocal():
-            ds_path = self.inputDataset[len('local:'):]
-            if not os.path.exists(ds_path):
-              raise RuntimeError(f'{self.name}: unable to find local dataset path "{ds_path}"')
-            self.datasetFiles = {}
-            all_files = []
-            for subdir, dirs, files in os.walk(ds_path):
-              for file in files:
-                if file.endswith('.root') and not file.startswith('.'):
-                  all_files.append('file:' + os.path.join(subdir, file))
-            for file_id, file_path in enumerate(natural_sort(all_files)):
-              self.datasetFiles[file_path] = file_id
-          else:
-            query = f'file dataset={self.inputDataset}'
-            if self.inputDBS != 'global':
-              query += f' instance=prod/{self.inputDBS}'
-            _,output,_ = sh_call(['dasgoclient', '--query', query],
-                                catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
-                                env=self.getCmsswEnv())
-            self.datasetFiles = {}
-            all_files = []
-            for file in output:
-              file = file.strip()
-              if len(file) > 0:
-                all_files.append(file)
-            for file_id, file in enumerate(natural_sort(all_files)):
-              self.datasetFiles[file] = file_id
         with open(datasetFilesPath, 'w') as f:
           json.dump(self.datasetFiles, f, indent=2)
       if len(self.datasetFiles) == 0:
@@ -258,43 +245,11 @@ class Task:
   def getFileRunLumi(self):
     if self.fileRunLumi is None:
       fileRunLumiPath = os.path.join(self.workArea, 'file_run_lumi.json')
-      cmdBase = ['dasgoclient', '--query']
-      allRuns = f'file,run,lumi dataset={self.inputDataset}'
-      if self.inputDBS != 'global':
-        allRuns += f' instance=prod/{self.inputDBS}'
-
-      def getDasInfo(cmd):
-        _,output,_ = sh_call(cmd, catch_stdout=True, split='\n', timeout=Task.dasOperationTimeout,
-                             env=self.getCmsswEnv())
-        descs = []
-        for desc in output:
-          desc = desc.strip()
-          if len(desc) > 0:
-            split_desc = desc.split(' ')
-            if len(split_desc) != 3:
-              raise RuntimeError(f'Bad file,run,lumi format in "{desc}"')
-            descs.append([split_desc[0], json.loads(split_desc[1]), json.loads(split_desc[2])])
-        return descs
 
       if not os.path.exists(fileRunLumiPath):
         print(f'{self.name}: Gathering file->(run,lumi) correspondance ...')
-        self.fileRunLumi = {}
-        for file, runs, lumis in getDasInfo(cmdBase + [allRuns]):
-          if type(lumis) != list:
-            raise RuntimeError(f'Unexpected lumis type for "{file}"')
-          if type(runs) == int or len(runs) == 1:
-            run = runs if type(runs) == int else runs[0]
-            self.fileRunLumi[file] = { run: lumis }
-          elif len(runs) == 0:
-            raise RuntimeError(f'Empty runs for {file}.')
-          else:
-            self.fileRunLumi[file] = { }
-            for run in runs:
-              runRequest = allRuns + f' run={run}'
-              for runFile, runRuns, runLumis in getDasInfo(cmdBase + [runRequest]):
-                if runFile == file:
-                  self.fileRunLumi[file][run] = runLumis
-                  break
+        self.fileRunLumi = getFileRunLumi(self.inputDataset, inputDBS=self.inputDBS,
+                                          dasOperationTimeout=Task.dasOperationTimeout)
         with open(fileRunLumiPath, 'w') as f:
           json.dump(self.fileRunLumi, f, indent=2)
       else:
@@ -542,7 +497,8 @@ class Task:
         print(f'{self.name}: submitting ...')
       try:
         timeout = None if self.dryrun else Task.crabOperationTimeout
-        sh_call(['python3', crabSubmitPath, self.workArea], timeout=timeout, env=self.getCmsswEnv())
+        sh_call(['python3', crabSubmitPath, self.workArea], timeout=timeout, env=self.getCmsswEnv(),
+                singularity_cmd=self.singularity_cmd)
         self.taskStatus.status = Status.Submitted
         self.saveStatus()
       except ShCallError as e:
@@ -576,7 +532,7 @@ class Task:
     else:
       returncode, output, err = sh_call(['crab', 'status', '--json', '-d', self.crabArea()],
                                         catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout,
-                                        env=self.getCmsswEnv())
+                                        env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
       self.taskStatus = LogEntryParser.Parse(output)
       self.saveStatus()
       with open(self.lastCrabStatusLog(), 'w') as f:
@@ -690,9 +646,10 @@ class Task:
     if len(file_list) > 0:
       file_list = ','.join(file_list)
       cmd.append(f'inputFiles={file_list}')
-      sh_call(cmd, cwd=job_home, env=self.getCmsswEnv())
+      sh_call(cmd, cwd=job_home, env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
       _, scriptName = os.path.split(self.scriptExe)
-      sh_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv())
+      sh_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv(),
+              singularity_cmd=self.singularity_cmd)
     else:
       tar = tarfile.open(job_output, 'w')
       tar.close()
@@ -710,7 +667,8 @@ class Task:
     if self.isInLocalRunMode():
       print(f'{self.name}: cannot kill a task with local jobs.')
     else:
-      sh_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv())
+      sh_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv(),
+              singularity_cmd=self.singularity_cmd)
 
   def getProcessedFiles(self, lastRecoveryIndex=None):
     if lastRecoveryIndex is None:
