@@ -9,13 +9,13 @@ import threading
 from .law_customizations import HTCondorWorkflow
 from .crabTask import Task as CrabTask
 from .crabTaskStatus import Status
-from .sh_tools import sh_call
+from .run_tools import ps_call
 
 cond = threading.Condition()
 
 def update_kinit(verbose=0):
   if shutil.which('kinit'):
-    sh_call(['kinit', '-R'], expected_return_codes=None, verbose=verbose)
+    ps_call(['kinit', '-R'], expected_return_codes=None, verbose=verbose)
 
 def update_kinit_thread():
   timeout = 60.0 * 60 # 1 hour

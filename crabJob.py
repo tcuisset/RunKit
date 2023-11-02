@@ -7,7 +7,7 @@ import sys
 import tarfile
 import traceback
 
-from sh_tools import ShCallError, copy_remote_file
+from RunKit.run_tools import PsCallError, copy_remote_file
 
 _error_msg_fmt = '''
 <FrameworkError ExitStatus="{}" Type="Fatal error" >
@@ -120,7 +120,7 @@ def processFile(jobModule, file_id, input_file, output_file, cmd_line_args, para
       module_input_file = f'file:{local_file}'
     jobModule.processFile(module_input_file, output_file, tmp_files, cmssw_report, cmd_line_args, params)
     result = True
-  except ShCallError as e:
+  except PsCallError as e:
     print(traceback.format_exc())
     exception = e
   except Exception as e:
@@ -186,7 +186,7 @@ if __name__ == "__main__":
   try:
     runJob(sys.argv[1:])
     exit(0)
-  except ShCallError as e:
+  except PsCallError as e:
     print(traceback.format_exc())
     exit(e.return_code, str(e))
   except Exception as e:

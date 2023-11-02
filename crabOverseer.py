@@ -13,7 +13,8 @@ if __name__ == "__main__":
 
 from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
-from .sh_tools import ShCallError, sh_call, get_voms_proxy_info
+from .run_tools import PsCallError, ps_call
+from .grid_tools import get_voms_proxy_info
 
 class TaskStat:
   summary_only_thr = 10
@@ -200,7 +201,7 @@ def apply_action(action, tasks, task_selection, task_list_path):
       print(f'{task.name}: sending kill request...')
       try:
         task.kill()
-      except ShCallError as e:
+      except PsCallError as e:
         print(f'{task.name}: error sending kill request. {e}')
   elif action == 'remove':
     for task in selected_tasks:
@@ -301,7 +302,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       ]
       if 'requirements' in local_proc_params:
         cmd.extend(['--requirements', local_proc_params['requirements']])
-      sh_call(cmd)
+      ps_call(cmd)
       for task in to_post_process + to_run_locally:
         task.updateStatusFromFile()
       print(timestamp_str() + "Local grid processing iteration finished.")
@@ -321,7 +322,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         print(timestamp_str() + "Exiting...")
         break
     if main_cfg.get('renewKerberosTicket', False):
-      sh_call(['kinit', '-R'])
+      ps_call(['kinit', '-R'])
   if not has_unfinished:
     print("All tasks are done.")
 

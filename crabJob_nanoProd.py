@@ -1,6 +1,6 @@
 import os
 import shutil
-from sh_tools import sh_call
+from RunKit.run_tools import ps_call
 
 def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args, cfg_params):
   run_cmsDriver = True
@@ -53,19 +53,19 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
 
     cmssw_cmd = [ 'cmsRun',  '-j', cmssw_report, cmsDriver_py ]
 
-    sh_call(cmsDrive_cmd, verbose=1)
-    sh_call(cmssw_cmd, verbose=1)
+    ps_call(cmsDrive_cmd, verbose=1)
+    ps_call(cmssw_cmd, verbose=1)
 
   if run_skim:
     shutil.move(output_file, cmsRun_out)
     skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
     cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
                 '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetup, '--skip-empty', '--verbose', '1']
-    sh_call(cmd_line, verbose=1)
+    ps_call(cmd_line, verbose=1)
 
     if store_failed:
       cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
                   '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetupFailed,
                    '--skip-empty', '--update-output', '--verbose', '1']
-      sh_call(cmd_line, verbose=1)
+      ps_call(cmd_line, verbose=1)
 

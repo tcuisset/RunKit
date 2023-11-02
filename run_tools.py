@@ -1,0 +1,168 @@
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import traceback
+import zlib
+from threading import Timer
+
+class PsCallError(RuntimeError):
+  def __init__(self, cmd_str, return_code, additional_message=None):
+    msg = f'Error while running "{cmd_str}."'
+    if return_code is not None:
+      msg += f' Error code: {return_code}'
+    if additional_message is not None:
+      msg += f' {additional_message}'
+    super(PsCallError, self).__init__(msg)
+    self.cmd_str = cmd_str
+    self.return_code = return_code
+    self.message = additional_message
+
+def ps_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=True, split=None, print_output=False,
+            expected_return_codes=[0], env=None, cwd=None, timeout=None, singularity_cmd=None, verbose=0):
+  if singularity_cmd is not None:
+    full_cmd = [ singularity_cmd, '--command-to-run' ]
+    if env is not None:
+      full_cmd.extend([ 'env', '-i' ])
+      for key, value in env.items():
+        full_cmd.append(f'{key}={value}')
+    full_cmd.extend(cmd)
+  else:
+    full_cmd = cmd
+  cmd_str = []
+  for s in full_cmd:
+    if ' ' in s:
+      s = f"'{s}'"
+    cmd_str.append(s)
+  cmd_str = ' '.join(cmd_str)
+  if verbose > 0:
+    print(f'>> {cmd_str}', file=sys.stderr)
+  kwargs = {
+    'shell': shell,
+  }
+  if catch_stdout:
+    kwargs['stdout'] = subprocess.PIPE
+  if catch_stderr:
+    if print_output:
+      kwargs['stderr'] = subprocess.STDOUT
+    else:
+      kwargs['stderr'] = subprocess.PIPE
+  if env is not None:
+    kwargs['env'] = env
+  if cwd is not None:
+    kwargs['cwd'] = cwd
+
+  # psutil.Process.children does not work.
+  def kill_proc(pid):
+    child_list = subprocess.run(['ps', 'h', '--ppid', str(pid)], capture_output=True, encoding="utf-8")
+    for line in child_list.stdout.split('\n'):
+      child_info = line.split(' ')
+      child_info = [ s for s in child_info if len(s) > 0 ]
+      if len(child_info) > 0:
+        child_pid = child_info[0]
+        kill_proc(child_pid)
+    subprocess.run(['kill', '-9', str(pid)], capture_output=True)
+
+  proc = subprocess.Popen(full_cmd, **kwargs)
+  def kill_main_proc():
+    print(f'\nTimeout is reached while running:\n\t{cmd_str}', file=sys.stderr)
+    print(f'Killing process tree...', file=sys.stderr)
+    print(f'Main process PID = {proc.pid}', file=sys.stderr)
+    kill_proc(proc.pid)
+
+  timer = Timer(timeout, kill_main_proc) if timeout is not None else None
+  try:
+    if timer is not None:
+      timer.start()
+    if catch_stdout and print_output:
+      output = b''
+      err = b''
+      for line in proc.stdout:
+        output += line
+        print(line.decode("utf-8"), end="")
+      proc.stdout.close()
+      proc.wait()
+    else:
+      output, err = proc.communicate()
+  finally:
+    if timer is not None:
+      timer.cancel()
+  if expected_return_codes is not None and proc.returncode not in expected_return_codes:
+    raise PsCallError(cmd_str, proc.returncode)
+  if decode:
+    if catch_stdout:
+      output_decoded = output.decode("utf-8")
+      if split is None:
+        output = output_decoded
+      else:
+        output = output_decoded.split(split)
+    if catch_stderr:
+      err_decoded = err.decode("utf-8")
+      if split is None:
+        err = err_decoded
+      else:
+        err = err_decoded.split(split)
+
+  return proc.returncode, output, err
+
+def update_kerberos_ticket(verbose=1):
+  ps_call(['kinit', '-R'], verbose=verbose)
+
+def timed_call_wrapper(fn, update_interval, verbose=0):
+  last_update = None
+  def update(*args, **kwargs):
+    nonlocal last_update
+    now = datetime.datetime.now()
+    delta_t = (now - last_update).total_seconds() if last_update is not None else float("inf")
+    if verbose > 0:
+      print(f"timed_call for {fn.__name__}: delta_t = {delta_t} seconds")
+    if delta_t >= update_interval:
+      fn(*args, **kwargs)
+      last_update = now
+  return update
+
+def adler32sum(file_name):
+  block_size = 256 * 1024 * 1024
+  asum = 1
+  with open(file_name, 'rb') as f:
+    while (data := f.read(block_size)):
+      asum = zlib.adler32(data, asum)
+  return asum
+
+def repeat_until_success(fn, opt_list=([],), raise_error=True, error_message="", n_retries=4, retry_sleep_interval=10,
+                         verbose=1):
+  for n in range(n_retries):
+    for opt in opt_list:
+      try:
+        fn(*opt)
+        return True
+      except:
+        if verbose > 0:
+          print(traceback.format_exc())
+      if n != n_retries - 1:
+        if verbose > 0:
+          print(f'Waiting for {retry_sleep_interval} seconds before the next try.')
+        time.sleep(retry_sleep_interval)
+
+  if raise_error:
+    raise RuntimeError(error_message)
+  return False
+
+def natural_sort(l):
+  convert = lambda text: int(text) if text.isdigit() else text.lower()
+  alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
+  return sorted(l, key=alphanum_key)
+
+if __name__ == "__main__":
+  import sys
+  cmd = sys.argv[1]
+  out = getattr(sys.modules[__name__], cmd)(*sys.argv[2:])
+  if out is not None:
+    out_t = type(out)
+    if out_t in [list, dict]:
+      print(json.dumps(out, indent=2))
+    else:
+      print(out)

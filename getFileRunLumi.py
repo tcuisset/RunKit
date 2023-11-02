@@ -7,7 +7,7 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .sh_tools import sh_call
+from .run_tools import ps_call
 
 def getFileRunLumi(inputDataset, inputDBS='global', dasOperationTimeout=None, env=None, verbose=0):
   cmdBase = ['dasgoclient', '--query']
@@ -17,7 +17,7 @@ def getFileRunLumi(inputDataset, inputDBS='global', dasOperationTimeout=None, en
 
   def getDasInfo(cmdBase, query, mode, verbose):
     cmd = cmdBase + [mode + ' ' + query]
-    _,output,_ = sh_call(cmd, catch_stdout=True, split='\n', timeout=dasOperationTimeout, env=env, verbose=verbose)
+    _,output,_ = ps_call(cmd, catch_stdout=True, split='\n', timeout=dasOperationTimeout, env=env, verbose=verbose)
     descs = []
     for desc in output:
       desc = desc.strip()

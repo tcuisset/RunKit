@@ -14,5 +14,6 @@ RunKit is a toolkit to simplify root-tuple production and job submission within 
 - [haddnanoEx.py](otherTools.md): hadd nanoAOD files with an extended functionality
 - [includeCMSSWlibs.py](otherTools.md): load some CMSSW libraries to be used with standalone ROOT
 - [inspectNanoFile.py](otherTools.md): inspect nanoAOD file (original code is copied from CMS software)
-- [sh_tools.py](otherTools.md): a set of common tools to run sub-processes, copy remote files, ...
+- [run_tools.py](otherTools.md): a set of common tools to run sub-processes, renew kerberos, ...
+- [grid_tools.py](otherTools.md): a set of common tools to matipulate remote files
 - [xsdb_search.py](otherTools.md): search sample cross-section in XSDB (original code is copied from CMS software)

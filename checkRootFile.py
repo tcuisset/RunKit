@@ -8,7 +8,7 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .sh_tools import sh_call
+from .run_tools import ps_call
 
 def checkRootFile(root_file, tree_name, branches=None, verbose=1):
   try:
@@ -34,7 +34,7 @@ def checkRootFileSafe(root_file, tree_name, branches=None, verbose=1):
   if branches is not None and len(branches) > 0:
     cmd += ['--branches', ','.join(branches)]
   cmd += [ root_file ]
-  returncode,_,_ = sh_call(cmd, expected_return_codes=None)
+  returncode,_,_ = ps_call(cmd, expected_return_codes=None)
   return returncode == 0
 
 if __name__ == "__main__":

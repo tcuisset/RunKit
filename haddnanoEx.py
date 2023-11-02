@@ -3,7 +3,7 @@ import re
 import shutil
 import time
 
-from sh_tools import ShCallError, sh_call
+from RunKit.run_tools import PsCallError, ps_call
 
 class InputFile:
   def __init__(self, name):
@@ -29,10 +29,10 @@ class OutputFile:
         os.remove(self.out_path)
       haddnano_path = os.path.join(os.path.dirname(__file__), 'haddnano.py')
       cmd = ['python3', '-u', haddnano_path, self.out_path ] + [ f.name for f in self.input_files ]
-      sh_call(cmd, verbose=1)
+      ps_call(cmd, verbose=1)
       self.size = float(os.path.getsize(self.out_path)) / (1024 * 1024)
       return True, None
-    except (ShCallError, OSError, FileNotFoundError) as e:
+    except (PsCallError, OSError, FileNotFoundError) as e:
       return False, e
 
   def merge(self, out_dir, max_n_retries, retry_interval):

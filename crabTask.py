@@ -14,7 +14,8 @@ if __name__ == "__main__":
   __package__ = 'RunKit'
 
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
-from .sh_tools import ShCallError, sh_call, natural_sort, get_voms_proxy_info, gfal_copy, gfal_ls_recursive
+from .run_tools import PsCallError, ps_call, natural_sort
+from .grid_tools import get_voms_proxy_info, gfal_copy, gfal_ls_recursive
 from .envToJson import get_cmsenv
 from .getFileRunLumi import getFileRunLumi
 
@@ -378,7 +379,7 @@ class Task:
             raise RuntimeError(f'{self.name}: duplicated file {file} in {outputFile}')
           files[file] = file_id
     if nonLocal:
-      sh_call(['rm', outputFile,], shell=False, verbose=0)
+      ps_call(['rm', outputFile,], shell=False, verbose=0)
     return files
 
   def getPostProcessList(self):
@@ -438,7 +439,7 @@ class Task:
                 time.sleep(try_delay)
           unpackedFiles.append(os.path.join(outputDir, packedFile))
       if nonLocal:
-        sh_call(['rm', tarFile,], shell=False, verbose=0)
+        ps_call(['rm', tarFile,], shell=False, verbose=0)
     unpackedList = self.getPostProcessList() + f'.{outputName}.unpacked'
     with open(unpackedList, 'w') as f:
       for file in unpackedFiles:
@@ -455,7 +456,7 @@ class Task:
       cmd = [ 'python3', '-u', haddnanoEx_path, '--output-dir', self.getFinalOutput(),
               '--output-name', outputName, '--target-size', str(self.targetOutputFileSize),
               '--file-list', unpackedList ]
-      _, output, _ = sh_call(cmd, catch_stdout=True, catch_stderr=True, print_output=True, verbose=1)
+      _, output, _ = ps_call(cmd, catch_stdout=True, catch_stderr=True, print_output=True, verbose=1)
       with open(os.path.join(self.workArea, f'postProcessing_{outputNameBase}.log'), 'w') as f:
         f.write(output)
       if os.path.exists(unpackedDir):
@@ -497,11 +498,11 @@ class Task:
         print(f'{self.name}: submitting ...')
       try:
         timeout = None if self.dryrun else Task.crabOperationTimeout
-        sh_call(['python3', crabSubmitPath, self.workArea], timeout=timeout, env=self.getCmsswEnv(),
+        ps_call(['python3', crabSubmitPath, self.workArea], timeout=timeout, env=self.getCmsswEnv(),
                 singularity_cmd=self.singularity_cmd)
         self.taskStatus.status = Status.Submitted
         self.saveStatus()
-      except ShCallError as e:
+      except PsCallError as e:
         crabArea = self.crabArea()
         if os.path.exists(crabArea):
           shutil.rmtree(crabArea)
@@ -530,7 +531,7 @@ class Task:
       self.saveStatus()
       neen_local_run = self.taskStatus.status != Status.CrabFinished
     else:
-      returncode, output, err = sh_call(['crab', 'status', '--json', '-d', self.crabArea()],
+      returncode, output, err = ps_call(['crab', 'status', '--json', '-d', self.crabArea()],
                                         catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout,
                                         env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
       self.taskStatus = LogEntryParser.Parse(output)
@@ -597,7 +598,7 @@ class Task:
     self.saveCfg()
     try:
       self.submit()
-    except ShCallError as e:
+    except PsCallError as e:
       self.recoveryIndex -= 1
       self.saveCfg()
       raise e
@@ -646,9 +647,9 @@ class Task:
     if len(file_list) > 0:
       file_list = ','.join(file_list)
       cmd.append(f'inputFiles={file_list}')
-      sh_call(cmd, cwd=job_home, env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
+      ps_call(cmd, cwd=job_home, env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
       _, scriptName = os.path.split(self.scriptExe)
-      sh_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv(),
+      ps_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv(),
               singularity_cmd=self.singularity_cmd)
     else:
       tar = tarfile.open(job_output, 'w')
@@ -667,7 +668,7 @@ class Task:
     if self.isInLocalRunMode():
       print(f'{self.name}: cannot kill a task with local jobs.')
     else:
-      sh_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv(),
+      ps_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv(),
               singularity_cmd=self.singularity_cmd)
 
   def getProcessedFiles(self, lastRecoveryIndex=None):
