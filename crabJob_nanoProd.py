@@ -2,30 +2,23 @@ import os
 import shutil
 from RunKit.run_tools import ps_call
 
-def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args, cfg_params):
+def processFile(input_file, outputs, tmp_files, cmssw_report, cmd_line_args, cfg_params):
   run_cmsDriver = True
-  store_failed = cfg_params.storeFailed
-  skim_cfg = cfg_params.skimCfg
-  run_skim = len(skim_cfg) > 0
   debug = len(cmd_line_args) > 0 and cmd_line_args[0] == 'DEBUG'
-
   if debug:
     if len(cmd_line_args) > 1:
       run_cmsDriver = cmd_line_args[1] == 'True'
-    if len(cmd_line_args) > 2:
-      run_skim = cmd_line_args[2] == 'True'
-    if len(cmd_line_args) > 3:
-      store_failed = cmd_line_args[3] == 'True'
 
-  output_name, output_ext = os.path.splitext(output_file)
-  cmsRun_out = output_name + '_cmsDriver' + output_ext
+  cmsRun_out = 'cmsRun_out.root'
   cmsDriver_py = 'nano_NANO.py'
-  tmp_files.extend([ cmsRun_out, cmsDriver_py ])
+  tmp_files.extend([ cmsDriver_py ])
+  if os.path.exists(cmsRun_out):
+    os.remove(cmsRun_out)
 
   if run_cmsDriver:
     n_threads = 1
     cmsDrive_cmd = [
-      'cmsDriver.py', 'nano', '--filein', input_file, '--fileout', f'file:{output_file}',
+      'cmsDriver.py', 'nano', '--filein', input_file, '--fileout', f'file:{cmsRun_out}',
       '--eventcontent', 'NANOAODSIM', '--datatier', 'NANOAODSIM', '--step', 'NANO', '--nThreads', f'{n_threads}',
       f'--{cfg_params.sampleType}', '--conditions', cfg_params.cond,
       '--era', f"{cfg_params.era}", '-n', f'{cfg_params.maxEvents}', '--no_exec',
@@ -56,16 +49,17 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
     ps_call(cmsDrive_cmd, verbose=1)
     ps_call(cmssw_cmd, verbose=1)
 
-  if run_skim:
-    shutil.move(output_file, cmsRun_out)
-    skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
-    cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
-                '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetup, '--skip-empty', '--verbose', '1']
-    ps_call(cmd_line, verbose=1)
-
-    if store_failed:
-      cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
-                  '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetupFailed,
-                   '--skip-empty', '--update-output', '--verbose', '1']
+  skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
+  for output in outputs:
+    if len(output['skim_cfg']) > 0:
+      cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output['file_name'],
+                '--config', output['skim_cfg'], '--setup', output['skim_setup'], '--skip-empty', '--verbose', '1']
       ps_call(cmd_line, verbose=1)
 
+      if len(output['skim_setup_failed']) > 0:
+        cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output['file_name'],
+                    '--config', output['skim_cfg'], '--setup', output['skim_setup_failed'],
+                    '--skip-empty', '--update-output', '--verbose', '1']
+        ps_call(cmd_line, verbose=1)
+    else:
+      shutil.copy(cmsRun_out, output['file_name'])

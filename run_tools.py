@@ -108,6 +108,13 @@ def ps_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
 
   return proc.returncode, output, err
 
+def timestamp_str():
+  t = datetime.datetime.now()
+  return t.strftime('%Y-%m-%d %H:%M:%S')
+
+def print_ts(msg, prefix='', *args, **kwargs):
+  print(f'{prefix}[{timestamp_str()}] {msg}', *args, **kwargs)
+
 def update_kerberos_ticket(verbose=1):
   ps_call(['kinit', '-R'], verbose=verbose)
 

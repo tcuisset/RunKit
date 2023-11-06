@@ -265,9 +265,11 @@ def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global',
   return pfns
 
 def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_retries=4, retry_sleep_interval=10,
-                     custom_pfns_prefix='', verbose=1):
+                     custom_pfns_prefix='', voms_token=None, verbose=1):
   pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=False, return_adler32=True, inputDBS=inputDBS,
                                      verbose=verbose)
+  if voms_token is None:
+    voms_token = get_voms_proxy_info()['path']
   if os.path.exists(output_local_file):
     if adler32 is not None and check_download(output_local_file, expected_adler32sum=adler32):
       return
@@ -288,8 +290,7 @@ def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_
     if pfns.startswith('root:') or pfns.startswith('/store/'):
       xrd_copy(pfns, output_local_file, expected_adler32sum=adler32, n_retries=1, prefixes=[''], verbose=verbose)
     elif pfns.startswith('srm:') or pfns.startswith('gsiftp') or pfns.startswith('davs:'):
-      voms_info = get_voms_proxy_info()
-      gfal_copy_safe(pfns, output_local_file, voms_info['path'], expected_adler32sum=adler32, n_retries=1)
+      gfal_copy_safe(pfns, output_local_file, voms_token, expected_adler32sum=adler32, n_retries=1)
     else:
       raise RuntimeError('Skipping an unknown remote source "{pfns}".')
 

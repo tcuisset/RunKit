@@ -66,6 +66,7 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
   def run(self):
     thread = threading.Thread(target=update_kinit_thread)
     thread.start()
+    job_home, remove_job_home = self.law_job_home()
     try:
       work_area, grid_job_id, done_flag = self.branch_data
       task = CrabTask.Load(workArea=work_area)
@@ -73,24 +74,24 @@ class ProdTask(HTCondorWorkflow, law.LocalWorkflow):
         if task.taskStatus.status in [ Status.CrabFinished, Status.PostProcessingFinished ]:
           if task.taskStatus.status == Status.CrabFinished:
             print(f'Post-processing {task.name}')
-            task.postProcessOutputs()
+            task.postProcessOutputs(job_home)
           self.output().touch()
         else:
           raise RuntimeError(f"task {task.name} is not ready for post-processing")
       else:
         print(f'Running {task.name} job_id = {grid_job_id}')
-        job_home, remove_job_home = self.law_job_home()
         result = task.runJobLocally(grid_job_id, job_home)
         state_str = 'finished' if result else 'failed'
-        if remove_job_home:
-          shutil.rmtree(job_home)
         with self.output().open('w') as output:
           output.write(state_str)
     finally:
+      if remove_job_home:
+        shutil.rmtree(job_home)
       cond.acquire()
       cond.notify_all()
       cond.release()
       thread.join()
+
 
   def poll_callback(self, poll_data):
     update_kinit(verbose=0)

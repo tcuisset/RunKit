@@ -26,12 +26,11 @@ def submit(task: Task):
   config.JobType.psetName = task.cmsswPython
   config.JobType.maxMemoryMB = task.getMaxMemory()
   config.JobType.numCores = task.numCores
-  config.JobType.sendPythonFolder = True
 
   if len(task.scriptExe) > 0:
     config.JobType.scriptExe = task.scriptExe
   config.JobType.inputFiles = task.getFilesToTransfer()
-  config.JobType.outputFiles = [ task.getCrabJobOutput() ]
+  config.JobType.outputFiles = [ ]
 
   config.Data.inputDBS = task.inputDBS
   config.Data.allowNonValidInputDataset = task.allowNonValid
@@ -39,7 +38,7 @@ def submit(task: Task):
   config.General.transferLogs = False
   config.Data.publication = False
 
-  config.Site.storageSite = task.site
+  #config.Site.storageSite = task.site
 
   if len(task.vomsGroup) != 0:
     config.User.voGroup = task.vomsGroup

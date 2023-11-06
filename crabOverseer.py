@@ -13,7 +13,7 @@ if __name__ == "__main__":
 
 from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
-from .run_tools import PsCallError, ps_call
+from .run_tools import PsCallError, ps_call, print_ts
 from .grid_tools import get_voms_proxy_info
 
 class TaskStat:
@@ -106,11 +106,6 @@ class TaskStat:
       print(f"Failed tasks that require manual intervention: {', '.join(names)}")
 
 
-def timestamp_str():
-  t = datetime.datetime.now()
-  t_str = t.strftime('%Y-%m-%d %H:%M:%S')
-  return f'[{t_str}] '
-
 def sanity_checks(task):
   abnormal_inactivity_thr = 24
 
@@ -146,7 +141,7 @@ def sanity_checks(task):
   return True
 
 def update(tasks, no_status_update=False):
-  print(timestamp_str() + "Updating...")
+  print_ts("Updating...")
   stat = TaskStat()
   to_post_process = []
   to_run_locally = []
@@ -164,7 +159,7 @@ def update(tasks, no_status_update=False):
     sanity_checks(task)
     if task.taskStatus.status == Status.CrabFinished:
       if task.checkCompleteness():
-        task.preparePostProcessList()
+        task.prepareForPostProcess()
         done_flag = task.getPostProcessingDoneFlagFile()
         if os.path.exists(done_flag):
           os.remove(done_flag)
@@ -278,9 +273,9 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     to_post_process, to_run_locally = update(tasks, no_status_update=no_status_update)
     if len(to_run_locally) > 0 or len(to_post_process) > 0:
       if len(to_run_locally) > 0:
-        print(timestamp_str() + "To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))
+        print_ts("To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))
       if len(to_post_process) > 0:
-        print(timestamp_str() + "Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
+        print_ts("Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
       local_proc_params = main_cfg['localProcessing']
       law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
       law_task_dir = os.path.join(law_sub_dir, local_proc_params['lawTask'])
@@ -305,7 +300,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       ps_call(cmd)
       for task in to_post_process + to_run_locally:
         task.updateStatusFromFile()
-      print(timestamp_str() + "Local grid processing iteration finished.")
+      print_ts("Local grid processing iteration finished.")
     has_unfinished = False
     for task_name, task in tasks.items():
       if task.taskStatus.status not in [ Status.PostProcessingFinished, Status.Failed ]:
@@ -316,10 +311,10 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     delta_t = (datetime.datetime.now() - last_update).total_seconds() / 60
     to_sleep = int(update_interval - delta_t)
     if to_sleep >= 1:
-      print(f"\n{timestamp_str()}Waiting for {to_sleep} minutes until the next update. Press return to exit.")
+      print_ts(f"Waiting for {to_sleep} minutes until the next update. Press return to exit.", prefix='\n')
       rlist, wlist, xlist = select.select([sys.stdin], [], [], to_sleep * 60)
       if rlist:
-        print(timestamp_str() + "Exiting...")
+        print_ts("Exiting...")
         break
     if main_cfg.get('renewKerberosTicket', False):
       ps_call(['kinit', '-R'])
