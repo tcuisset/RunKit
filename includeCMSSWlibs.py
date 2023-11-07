@@ -1,4 +1,4 @@
-from RunKit.run_tools import ps_call
+from .run_tools import ps_call
 import os
 import re
 import ROOT

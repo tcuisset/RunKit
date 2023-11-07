@@ -1,9 +1,13 @@
 # Crab wrapper.
 
 import os
+import sys
 import yaml
 import FWCore.ParameterSet.Config as cms
 from FWCore.ParameterSet.VarParsing import VarParsing
+
+print("Running nanoProdWrapper.py", file=sys.stderr)
+print("Arguments: ", sys.argv, file=sys.stderr)
 
 options = VarParsing('analysis')
 options.register('sampleType', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,

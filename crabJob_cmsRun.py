@@ -1,6 +1,15 @@
 import os
 import shutil
-from RunKit.run_tools import ps_call
+import sys
+
+if len(__package__) == 0:
+  file_dir = os.path.dirname(os.path.abspath(__file__))
+  base_dir = os.path.dirname(file_dir)
+  if base_dir not in sys.path:
+    sys.path.append(base_dir)
+  __package__ = os.path.split(file_dir)[-1]
+
+from .run_tools import ps_call
 
 def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args, cfg_params):
   run_cmsRun = True

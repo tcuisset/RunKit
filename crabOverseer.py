@@ -207,10 +207,11 @@ def apply_action(action, tasks, task_selection, task_list_path):
       json.dump([task_name for task_name in tasks], f, indent=2)
   elif action == 'remove_final_output':
     for task in selected_tasks:
-      task_output = task.getFinalOutput()
-      print(f'{task.name}: removing final output "{task_output}"...')
-      if os.path.exists(task_output):
-        shutil.rmtree(task_output)
+      for output in task.getOutputs():
+        task_output = output['finalOutput']
+        print(f'{task.name}: removing final output "{task_output}"...')
+        if os.path.exists(task_output):
+          shutil.rmtree(task_output)
   else:
     raise RuntimeError(f'Unknown action = "{action}"')
 

@@ -23,8 +23,8 @@ class Task:
   _taskCfgProperties = [
     'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'filesToTransfer',
     'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
-    'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun', 'finalOutput',
-    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType', 'tmpArea'
+    'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun',
+    'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType'
   ]
 
   _taskCfgPrivateProperties = [
@@ -76,7 +76,6 @@ class Task:
     self.gridJobs = None
     self.crabType = ''
     self.processedFilesCache = None
-    self.tmpArea = ''
     self.vomsToken = None
     self.startDate = ''
     self.endDate = ''
@@ -158,7 +157,7 @@ class Task:
     return self.outputs
 
   def getParams(self, appendDatasetFiles=True):
-    params = [ f'{key}={value}' for key,value in self.params.items() if 'key' != 'outputs' ]
+    params = [ f'{key}={value}' for key,value in self.params.items() if key != 'outputs' ]
     for output in self.getOutputs():
       output_list = [ output['file'], output['crabOutput'] ]
       if 'skimCfg' in output:
@@ -222,7 +221,8 @@ class Task:
   def getCmsswEnv(self):
     if self.cmsswEnv is None:
       cmssw_path = os.environ['DEFAULT_CMSSW_BASE']
-      self.cmsswEnv = get_cmsenv(cmssw_path, crab_env=True, crab_type=self.crabType)
+      self.cmsswEnv = get_cmsenv(cmssw_path, crab_env=True, crab_type=self.crabType,
+                                 singularity_cmd=self.singularity_cmd)
       self.cmsswEnv['X509_USER_PROXY'] = os.environ['X509_USER_PROXY']
       self.cmsswEnv['HOME'] = os.environ['HOME'] if 'HOME' in os.environ else self.workArea
       if 'KRB5CCNAME' in os.environ:
