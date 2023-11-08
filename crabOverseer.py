@@ -40,7 +40,7 @@ class TaskStat:
     self.all_tasks.append(task)
     if task.taskStatus.status not in self.tasks_by_status:
       self.tasks_by_status[task.taskStatus.status] = []
-    n_files_total, n_files_processed, n_files_to_process, n_files_ignored = task.getFilesStats()
+    n_files_total, n_files_processed, n_files_to_process, n_files_ignored = task.getFilesStats(useCacheOnly=False)
     self.n_files_total += n_files_total
     self.n_files_to_process += n_files_to_process
     self.n_files_processed += n_files_processed
@@ -83,11 +83,15 @@ class TaskStat:
     status_list = sorted(self.tasks_by_status.keys(), key=lambda x: x.value)
     n_tasks = len(self.all_tasks)
     status_list = [ f"{n_tasks} Total" ] + [ f"{len(self.tasks_by_status[x])} {x.name}" for x in status_list ]
-    print('Tasks: ' + ', '.join(status_list))
+    status_list_str = 'Tasks: ' + ', '.join(status_list)
+    self.status["tasksSummary"] = status_list_str
+    print(status_list_str)
     job_stat = [ f"{self.n_jobs} total" ] + \
                [ f'{cnt} {x.name}' for x, cnt in sorted(self.total_job_stat.items(), key=lambda a: a[0].value) ]
+    job_stat_str = 'Jobs in active tasks: ' + ', '.join(job_stat)
+    self.status["jobsSummary"] = job_stat_str
     if self.n_jobs > 0:
-      print('Jobs in active tasks: ' + ', '.join(job_stat))
+      print(job_stat_str)
     print(f'Input files: {self.n_files_total} total, {self.n_files_processed} processed,'
           f' {self.n_files_to_process} to_process, {self.n_files_ignored} ignored')
     if Status.InProgress in self.tasks_by_status:
@@ -316,7 +320,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         _, fileName = os.path.split(file)
         dest = os.path.join(htmlReportDest, fileName)
         gfal_copy_safe(file, dest, voms_token=vomsToken, verbose=0)
-      print_ts(f'HTML report is updated in {htmlReportDest}.')
+      print(f'HTML report is updated in {htmlReportDest}.')
       htmlUpdated = True
 
     if len(to_run_locally) > 0 or len(to_post_process) > 0:

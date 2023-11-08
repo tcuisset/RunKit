@@ -455,7 +455,7 @@ class Task:
   def updateStatus(self):
     neen_local_run = False
     oldTaskStatus = self.taskStatus
-    if self. isInLocalRunMode():
+    if self.isInLocalRunMode():
       self.taskStatus = CrabTaskStatus()
       self.taskStatus.status = Status.Submitted
       self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
@@ -602,7 +602,7 @@ class Task:
       ps_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv(),
               singularity_cmd=self.singularity_cmd)
 
-  def getProcessedFiles(self):
+  def getProcessedFiles(self, useCacheOnly=False):
     cache_file = os.path.join(self.workArea, 'processed_files.json')
     has_changes = False
     if self.processedFilesCache is None:
@@ -631,24 +631,25 @@ class Task:
         filePaths[output['file']] = filePath
       return filePaths
 
-    for file, fileId in self.getDatasetFiles().items():
-      if fileId in self.processedFilesCache: continue
-      outputPaths = collectOutputs(fileId)
-      if outputPaths is not None:
-        self.processedFilesCache[file] = {
-          'id': fileId,
-          'outputs': outputPaths
-        }
-        has_changes = True
+    if not useCacheOnly:
+      for file, fileId in self.getDatasetFiles().items():
+        if fileId in self.processedFilesCache: continue
+        outputPaths = collectOutputs(fileId)
+        if outputPaths is not None:
+          self.processedFilesCache[file] = {
+            'id': fileId,
+            'outputs': outputPaths
+          }
+          has_changes = True
 
     if has_changes:
       with open(cache_file, 'w') as f:
         json.dump(self.processedFilesCache, f, indent=2)
     return self.processedFilesCache
 
-  def getFilesStats(self):
+  def getFilesStats(self, useCacheOnly=True):
     allFiles = set(self.getDatasetFiles().keys())
-    processedFiles = set(self.getProcessedFiles().keys())
+    processedFiles = set(self.getProcessedFiles(useCacheOnly=useCacheOnly).keys())
     toProcess = allFiles - processedFiles - set(self.ignoreFiles)
     return len(allFiles), len(processedFiles), len(toProcess), len(self.ignoreFiles)
 
