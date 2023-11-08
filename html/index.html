@@ -53,8 +53,14 @@
             { name: "n_processed", title: "Processed files", type: "number", width: 50, editing: false },
             { name: "n_to_process", title: "Files to process", type: "number", width: 50, editing: false },
             { name: "n_ignored", title: "Ignored files", type: "number", width: 50, editing: false },
-            { name: "grafana", title: "Grafana page", type: "text", width: 100, editing: false,
-              itemTemplate: function(value) { return $("<a>").attr("href", value).attr("target", "_blank").text(value);} },
+            { name: "grafana", title: "Grafana page", type: "text", width: 50, editing: false,
+              itemTemplate: function(value) {
+                    var x = $("<a>").attr("href", value).attr("target", "_blank");
+                    if (value && value.length > 0) {
+                        x.text("link");
+                    }
+                    return x;
+                } },
         ];
         all_columns = columns.slice(0);
 
