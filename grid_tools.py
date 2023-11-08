@@ -89,23 +89,6 @@ def xrd_copy(input_remote_file, output_local_file, n_retries=4, n_retries_xrdcp=
                        error_message=f'Unable to copy {input_remote_file} from remote.', n_retries=n_retries,
                        retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
-# def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, timeout=7200,
-#               expected_adler32sum=None, n_retries=4, retry_sleep_interval=10, verbose=1):
-#   if voms_token is None:
-#     voms_token = get_voms_proxy_info()['path']
-#   if expected_adler32sum is not None:
-#     pass
-#   def download():
-#     if os.path.exists(output_local_file):
-#       os.remove(output_local_file)
-#     ps_call(['gfal-copy', '-n', str(number_of_streams), '-t', str(timeout), input_remote_file, output_local_file,],
-#             shell=False, env={'X509_USER_PROXY': voms_token}, verbose=1)
-#     check_download(output_local_file, expected_adler32sum=expected_adler32sum, remove_bad_file=True,
-#                    raise_error=True, remote_file=input_remote_file)
-
-#   repeat_until_success(download, raise_error=True, error_message=f'Unable to copy {input_remote_file} from remote.',
-#                        n_retries=n_retries, retry_sleep_interval=retry_sleep_interval, verbose=verbose)
-
 def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2, timeout=7200,
                    expected_adler32sum=None, n_retries=4, retry_sleep_interval=10, verbose=1):
   if voms_token is None:
@@ -139,9 +122,11 @@ def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, tim
   if voms_token is None:
     voms_token = get_voms_proxy_info()['path']
   try:
+    catch_output = verbose == 0
     ps_call([ 'gfal-copy', '--parent', '--nbstreams', str(number_of_streams), '--timeout', str(timeout),
                 input_file, output_file ],
-              shell=False, env={'X509_USER_PROXY': voms_token}, verbose=verbose)
+              shell=False, env={'X509_USER_PROXY': voms_token}, verbose=verbose,
+              catch_stdout=catch_output, catch_stderr=catch_output)
   except PsCallError as e:
     raise GfalError(f'gfal_copy: unable to copy "{input_file}" to "{output_file}"\n{e}')
 
@@ -182,12 +167,14 @@ def gfal_ls_recursive(path, voms_token=None, verbose=1):
       all_files.extend(gfal_ls_recursive(file.full_name, voms_token=voms_token, verbose=verbose))
   return sorted(set(all_files), key=lambda f: f.full_name)
 
-def gfal_exists(path, voms_token=None):
+def gfal_ls_safe(path, voms_token=None, catch_stderr=False, verbose=1):
   try:
-    gfal_ls(path, voms_token=voms_token, catch_stderr=True, verbose=0)
+    return gfal_ls(path, voms_token=voms_token, catch_stderr=catch_stderr, verbose=verbose)
   except GfalError:
-    return False
-  return True
+    return None
+
+def gfal_exists(path, voms_token=None):
+  return gfal_ls_safe(path, voms_token=voms_token, catch_stderr=True, verbose=0) is not None
 
 def gfal_sum(path, voms_token=None, sum_type='adler32'):
   if voms_token is None:

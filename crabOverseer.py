@@ -13,8 +13,8 @@ if __name__ == "__main__":
 
 from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
-from .run_tools import PsCallError, ps_call, print_ts
-from .grid_tools import get_voms_proxy_info
+from .run_tools import PsCallError, ps_call, print_ts, timestamp_str
+from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn
 
 class TaskStat:
   summary_only_thr = 10
@@ -30,11 +30,33 @@ class TaskStat:
     self.failed = []
     self.tape_recall = []
     self.max_inactivity = None
+    self.n_files_total = 0
+    self.n_files_to_process = 0
+    self.n_files_processed = 0
+    self.n_files_ignored = 0
+    self.status = { "lastUpdate": "", "tasks": [] }
 
   def add(self, task):
     self.all_tasks.append(task)
     if task.taskStatus.status not in self.tasks_by_status:
       self.tasks_by_status[task.taskStatus.status] = []
+    n_files_total, n_files_processed, n_files_to_process, n_files_ignored = task.getFilesStats()
+    self.n_files_total += n_files_total
+    self.n_files_to_process += n_files_to_process
+    self.n_files_processed += n_files_processed
+    self.n_files_ignored += n_files_ignored
+
+    self.status["tasks"].append({
+      "name": task.name,
+      "status": task.taskStatus.status.name,
+      "recoveryIndex": task.recoveryIndex,
+      "n_files": n_files_total,
+      "n_processed": n_files_processed,
+      "n_to_process": n_files_to_process,
+      "n_ignored": n_files_ignored,
+      "grafana": task.taskStatus.dashboard_url,
+    })
+
     self.tasks_by_status[task.taskStatus.status].append(task)
     if task.taskStatus.status == Status.InProgress:
       for job_status, count in task.taskStatus.job_stat.items():
@@ -66,7 +88,8 @@ class TaskStat:
                [ f'{cnt} {x.name}' for x, cnt in sorted(self.total_job_stat.items(), key=lambda a: a[0].value) ]
     if self.n_jobs > 0:
       print('Jobs in active tasks: ' + ', '.join(job_stat))
-
+    print(f'Input files: {self.n_files_total} total, {self.n_files_processed} processed,'
+          f' {self.n_files_to_process} to_process, {self.n_files_ignored} ignored')
     if Status.InProgress in self.tasks_by_status:
       if len(self.tasks_by_status[Status.InProgress]) > TaskStat.summary_only_thr:
         if(len(self.max_job_stat.items())):
@@ -169,7 +192,8 @@ def update(tasks, no_status_update=False):
           to_run_locally.append(task)
     stat.add(task)
   stat.report()
-  return to_post_process, to_run_locally
+  stat.status["lastUpdate"] = timestamp_str()
+  return to_post_process, to_run_locally, stat.status
 
 def apply_action(action, tasks, task_selection, task_list_path):
   selected_tasks = []
@@ -268,10 +292,33 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     task.checkConfigurationValidity()
 
   update_interval = main_cfg.get('updateInterval', 60)
+  vomsToken = get_voms_proxy_info()['path']
+  htmlUpdated = False
 
   while True:
     last_update = datetime.datetime.now()
-    to_post_process, to_run_locally = update(tasks, no_status_update=no_status_update)
+    to_post_process, to_run_locally, status = update(tasks, no_status_update=no_status_update)
+
+    status_path = os.path.join(work_area, 'status.json')
+    with(open(status_path, 'w')) as f:
+      json.dump(status, f, indent=2)
+    htmlReportDest = main_cfg.get('htmlReport', '')
+    if len(htmlReportDest) > 0:
+      if htmlReportDest.startswith('T'):
+        server, lfn = htmlReportDest.split(':')
+        htmlReportDest = lfn_to_pfn(server, lfn)
+      file_dir = os.path.dirname(os.path.abspath(__file__))
+      filesToCopy = [ status_path ]
+      if not htmlUpdated:
+        for file in [ 'index.html', 'jquery.min.js', 'jsgrid.css', 'jsgrid.min.js', 'jsgrid-theme.css']:
+          filesToCopy.append(os.path.join(file_dir, 'html', file))
+      for file in filesToCopy:
+        _, fileName = os.path.split(file)
+        dest = os.path.join(htmlReportDest, fileName)
+        gfal_copy_safe(file, dest, voms_token=vomsToken, verbose=0)
+      print_ts(f'HTML report is updated in {htmlReportDest}.')
+      htmlUpdated = True
+
     if len(to_run_locally) > 0 or len(to_post_process) > 0:
       if len(to_run_locally) > 0:
         print_ts("To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))

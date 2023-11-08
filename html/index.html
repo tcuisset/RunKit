@@ -1,0 +1,141 @@
+<html>
+<head>
+    <title>Production status</title>
+    <style>
+    h5.fixed {
+        position: fixed;
+        bottom: -10px;
+        left: 10px;
+    }
+    .total-row {
+        background-color: #808080;
+        font-weight: bold;
+    }
+    </style>
+</head>
+<body>
+    <h2 align=center>Tasks</h2>
+    <div id="jsGrid"></div>
+    <h5 class="fixed" id="lastUpdate">Last update: </h5>
+
+    <link type="text/css" rel="stylesheet" href="jsgrid.css" />
+    <link type="text/css" rel="stylesheet" href="jsgrid-theme.css" />
+
+    <script src="jquery.min.js"></script>
+    <script type="text/javascript" src="jsgrid.min.js"></script>
+
+    <script>
+        function find_match(value, filter) {
+            if(!filter) return true;
+            if(!value) return false;
+            var v_str = value.toString().toLowerCase();
+            var f_str = filter.toString().toLowerCase();
+            return v_str.indexOf(f_str) > -1;
+        }
+
+        function UpdateColPos(cols) {
+            var left = $('.jsgrid-grid-body').scrollLeft() < $('.jsgrid-grid-body .jsgrid-table').width() - $('.jsgrid-grid-body').width() + 16
+                ? $('.jsgrid-grid-body').scrollLeft() : $('.jsgrid-grid-body .jsgrid-table').width() - $('.jsgrid-grid-body').width() + 16;
+            $('.jsgrid-header-row th:nth-child(-n+' + cols + '), .jsgrid-filter-row td:nth-child(-n+' + cols + '), .jsgrid-insert-row td:nth-child(-n+' + cols + '), .jsgrid-grid-body tr td:nth-child(-n+' + cols + ')')
+                .css({
+                    "position": "relative",
+                    "left": left
+                });
+        }
+
+        columns = [
+            { name: "name", title: "Name", type: "text", width: 200, editing: false },
+            { name: "status", title: "Status", type: "text", width: 100, editing: false },
+            { name: "recoveryIndex", title: "Recovery index", type: "number", width: 50, editing: false },
+            { name: "n_files", title: "Total files", type: "number", width: 50, editing: false },
+            { name: "n_processed", title: "Processed files", type: "number", width: 50, editing: false },
+            { name: "n_to_process", title: "Files to process", type: "number", width: 50, editing: false },
+            { name: "n_ignored", title: "Ignored files", type: "number", width: 50, editing: false },
+            { name: "grafana", title: "Grafana page", type: "text", width: 100, editing: false,
+              itemTemplate: function(value) { return $("<a>").attr("href", value).attr("target", "_blank").text(value);} },
+        ];
+        all_columns = columns.slice(0);
+
+        var xmlhttp = new XMLHttpRequest();
+        xmlhttp.onreadystatechange = function() {
+            if (this.readyState == 4 && this.status == 200) {
+                var task_data = JSON.parse(this.responseText);
+                $("#lastUpdate").text("Last update: " + task_data["lastUpdate"]);
+                var db = {
+                    loadData: function(filter) {
+                        return $.grep(task_data["tasks"], function(item) {
+                            for(var c = 0; c < columns.length; c++) {
+                                var c_name = columns[c]["name"];
+                                if(!find_match(item[c_name], filter[c_name])) return false;
+                            }
+                            return true;
+                        });
+                    },
+                };
+
+                var originalFilterTemplate = jsGrid.fields.text.prototype.filterTemplate;
+                jsGrid.fields.text.prototype.filterTemplate = function() {
+                    var grid = this._grid;
+                    var $result = originalFilterTemplate.call(this);
+                    $result.on("keyup", function(e) {
+                        if(this.timeout)
+                            clearTimeout(this.timeout);
+                        this.timeout = setTimeout(function(){
+                            grid.search();
+                        }, 300);
+                    });
+                    return $result;
+                };
+
+                $("#jsGrid").jsGrid({
+                    width: "100%",
+                    height: "90%",
+
+                    filtering: true,
+                    inserting: false,
+                    editing: false,
+                    sorting: true,
+                    paging: true,
+                    autoload: true,
+
+                    pageSize: 100,
+                    pageButtonCount: 10,
+                    controller: db,
+
+                    pagerFormat: "{itemCount} tasks. Pages: {first} {prev} {pages} {next} {last}    {pageIndex} of {pageCount}",
+
+                    fields: all_columns,
+
+                    onRefreshed: function(args) {
+                        var items = args.grid.option("data");
+                        var total = {
+                            name: "Total",
+                            n_files: 0,
+                            n_processed: 0,
+                            n_to_process: 0,
+                            n_ignored: 0,
+                        };
+                        items.forEach(function(item) {
+                            total.n_files += item.n_files;
+                            total.n_processed += item.n_processed;
+                            total.n_to_process += item.n_to_process;
+                            total.n_ignored += item.n_ignored;
+                        });
+                        var $totalRow = $("<tr>").addClass("total-row");
+                        args.grid._renderCells($totalRow, total);
+                        args.grid._content.append($totalRow);
+                    },
+                });
+
+                $('.jsgrid-grid-body').scroll(function () { UpdateColPos(1); });
+            }
+        };
+        xmlhttp.open("GET", "status.json", true);
+        xmlhttp.send();
+
+    </script>
+
+</body>
+
+
+</html>

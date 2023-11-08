@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
 from .run_tools import PsCallError, ps_call, natural_sort, timestamp_str
-from .grid_tools import get_voms_proxy_info, lfn_to_pfn, gfal_exists, gfal_copy_safe
+from .grid_tools import get_voms_proxy_info, lfn_to_pfn, gfal_copy_safe, gfal_ls_safe
 from .envToJson import get_cmsenv
 from .getFileRunLumi import getFileRunLumi
 
@@ -304,10 +304,10 @@ class Task:
             for runLumi in runLumis:
               if not hasOverlaps(fileRun, runLumi):
                 return (fileRun, runLumi)
-          raise RuntimeError(f"{self.name}: Unable to find representative (run, lumi) for {file}. Using the first one.")
-          # fileRun = next(iter(fileRuns))
-          # runLumi = fileRuns[fileRun][0]
-          # return (fileRun, runLumi)
+          print(f"{self.name}: Unable to find representative (run, lumi) for {file}. Using the first one.")
+          fileRun = next(iter(fileRuns))
+          runLumi = fileRuns[fileRun][0]
+          return (fileRun, runLumi)
         self.fileRepresentativeRunLumi[file] = findFirstRepresentative()
     return self.fileRepresentativeRunLumi
 
@@ -613,12 +613,20 @@ class Task:
         self.processedFilesCache = {}
         has_changes = True
 
+    ls_result = {}
+
     def collectOutputs(fileId):
       filePaths = {}
       for output in self.getOutputs():
         fileName = f'{output["name"]}_{fileId}{output["ext"]}'
         filePath = os.path.join(output['crabOutput'], fileName)
-        if not gfal_exists(filePath, voms_token=self.getVomsToken()):
+        if output["file"] not in ls_result:
+          ls_result[output["file"]] = {}
+          ls_files = gfal_ls_safe(output['crabOutput'], voms_token=self.getVomsToken(), verbose=0)
+          if ls_files is not None:
+            for file_info in ls_files:
+              ls_result[output["file"]][file_info.name] = file_info
+        if fileName not in ls_result[output["file"]]:
           return None
         filePaths[output['file']] = filePath
       return filePaths
@@ -637,6 +645,12 @@ class Task:
       with open(cache_file, 'w') as f:
         json.dump(self.processedFilesCache, f, indent=2)
     return self.processedFilesCache
+
+  def getFilesStats(self):
+    allFiles = set(self.getDatasetFiles().keys())
+    processedFiles = set(self.getProcessedFiles().keys())
+    toProcess = allFiles - processedFiles - set(self.ignoreFiles)
+    return len(allFiles), len(processedFiles), len(toProcess), len(self.ignoreFiles)
 
   def getFilesToProcess(self):
     allFiles = set(self.getDatasetFiles().keys())
