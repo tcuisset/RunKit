@@ -386,22 +386,21 @@ class Task:
       cmd = [ 'python3', '-u', haddnanoEx_path, '--output-dir', output['finalOutput'], '--output-name', outputName,
              '--target-size', str(self.targetOutputFileSize), '--file-list', file_list_path, '--remote-io',
              '--work-dir', job_home, '--merge-report', hadd_report_path]
-      _, output, _ = ps_call(cmd, catch_stdout=True, catch_stderr=True, print_output=True, verbose=1)
-      with open(os.path.join(self.workArea, f'postProcessing_{outputNameBase}.log'), 'w') as f:
-        f.write(output)
+      ps_call(cmd, verbose=1)
       with open(hadd_report_path, 'r') as f:
         hadd_report = json.load(f)
-      report['ouputs'] = {}
+      report['outputs'] = {}
       for haddOutput, inputList in hadd_report.items():
         report['outputs'][haddOutput] = []
         for haddInput in inputList:
           report['outputs'][haddOutput].append(haddInputs[haddInput])
       report['processingEnd'] = timestamp_str()
 
-      report_tmp_path = os.path.join(job_home, 'prod_report.json')
-      report_final_path = os.path.join(output['finalOutput'], 'prod_report.json')
+      report_file =f'prodReport_{outputNameBase}.json'
+      report_tmp_path = os.path.join(job_home, report_file)
+      report_final_path = os.path.join(output['finalOutput'], report_file)
       with open(report_tmp_path, 'w') as f:
-        json.dump(f, report, indent=2)
+        json.dump(report, f, indent=2)
       gfal_copy_safe(report_tmp_path, report_final_path, self.getVomsToken(), verbose=1)
 
     self.taskStatus.status = Status.PostProcessingFinished

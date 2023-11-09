@@ -214,7 +214,7 @@ def createOutputPlan(input_files, target_size, output_name_base):
 def cleanOutput(output_dir, output_name_base, io_provider):
   name_pattern = re.compile(f'^{output_name_base}(|_[0-9]+)\.(root|tmp)$')
   files = io_provider.ls(output_dir, recursive=False, not_exists_ok=True)
-  for file in files:
+  for file, file_size in files:
     if name_pattern.match(file):
       io_provider.rm(file)
 

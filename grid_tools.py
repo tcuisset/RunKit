@@ -148,7 +148,10 @@ def gfal_ls(path, voms_token=None, catch_stderr=False, verbose=1):
     file = FileInfo()
     file.name = items.group(4).strip()
     if file.name in ['.', '..']: continue
-    file.path = path
+    if file.name == path:
+      file.path, file.name = os.path.split(path)
+    else:
+      file.path = path
     file.size = int(items.group(2))
     file.date = datetime.datetime.strptime(items.group(3), '%Y-%m-%d %H:%M')
     file.is_dir = items.group(1).startswith('d')
