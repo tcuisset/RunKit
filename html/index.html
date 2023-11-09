@@ -28,8 +28,8 @@
 
     <script>
         function find_match(value, filter) {
-            if(!filter) return true;
-            if(!value) return false;
+            if(Object.is(filter, null) || Object.is(filter, undefined)) return true;
+            if(Object.is(value, null) || Object.is(value, undefined)) return false;
             var v_str = value.toString().toLowerCase();
             var f_str = filter.toString().toLowerCase();
             return v_str.indexOf(f_str) > -1;
@@ -53,7 +53,7 @@
             { name: "n_processed", title: "Processed files", type: "number", width: 50, editing: false },
             { name: "n_to_process", title: "Files to process", type: "number", width: 50, editing: false },
             { name: "n_ignored", title: "Ignored files", type: "number", width: 50, editing: false },
-            { name: "grafana", title: "Grafana page", type: "text", width: 50, editing: false,
+            { name: "grafana", title: "Dashboard", type: "text", width: 50, editing: false,
               itemTemplate: function(value) {
                     var x = $("<a>").attr("href", value).attr("target", "_blank");
                     if (value && value.length > 0) {
@@ -99,7 +99,7 @@
 
                 $("#jsGrid").jsGrid({
                     width: "100%",
-                    height: "90%",
+                    height: "80%",
 
                     filtering: true,
                     inserting: false,
