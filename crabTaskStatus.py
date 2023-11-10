@@ -136,6 +136,8 @@ class LogEntryParser:
   def status_on_server(task_status, log_lines, n, value):
     if value == "QUEUED on command SUBMIT":
       task_status.status_on_server = StatusOnServer.QUEUED
+    elif value == "TAPERECALL on command SUBMIT":
+      task_status.status_on_server = StatusOnServer.TAPERECALL
     else:
       if value not in StatusOnServer.__members__:
         raise RuntimeError(f'Unknown status on the CRAB server = "{value}"')

@@ -19,35 +19,30 @@ def submit(task: Task):
   config = Config()
 
   config.General.workArea = task.workArea
-  # config.section_("Debug")
-  # config.Debug.extraJDL = ["+CMS_ALLOW_OVERFLOW=False"]
+  config.General.transferOutputs = False
+  config.General.transferLogs = False
+  config.General.requestName = task.requestName()
 
   config.JobType.pluginName = 'Analysis'
   config.JobType.psetName = task.cmsswPython
   config.JobType.maxMemoryMB = task.getMaxMemory()
   config.JobType.numCores = task.numCores
-  config.JobType.sendPythonFolder = True
-
   if len(task.scriptExe) > 0:
     config.JobType.scriptExe = task.scriptExe
   config.JobType.inputFiles = task.getFilesToTransfer()
-  config.JobType.outputFiles = [ task.getCrabJobOutput() ]
+  config.JobType.disableAutomaticOutputCollection = True
+  config.JobType.pyCfgParams = task.getParams()
 
   config.Data.inputDBS = task.inputDBS
   config.Data.allowNonValidInputDataset = task.allowNonValid
-  config.General.transferOutputs = True
-  config.General.transferLogs = False
   config.Data.publication = False
+  config.Data.unitsPerJob = task.getUnitsPerJob()
+  config.Data.splitting = task.getSplitting()
+  config.Data.lumiMask = task.getLumiMask()
+  config.Data.inputDataset = task.inputDataset
+  config.Data.ignoreLocality = task.getIgnoreLocality()
 
-  config.Site.storageSite = task.site
-
-  if len(task.vomsGroup) != 0:
-    config.User.voGroup = task.vomsGroup
-  if len(task.vomsRole) != 0:
-    config.User.voRole = task.vomsRole
-
-  config.Data.outLFNDirBase = task.crabOutput
-
+  config.Site.storageSite = 'T2_CH_CERN' # needed for CRABClient to work
   blacklist = task.getBlackList()
   if len(blacklist) != 0:
     config.Site.blacklist = blacklist
@@ -56,14 +51,10 @@ def submit(task: Task):
   if len(whitelist) != 0:
     config.Site.whitelist = whitelist
 
-  config.JobType.pyCfgParams = task.getParams()
-  config.Data.unitsPerJob = task.getUnitsPerJob()
-  config.Data.splitting = task.getSplitting()
-  config.Data.lumiMask = task.getLumiMask()
-  config.General.requestName = task.requestName()
-  config.Data.inputDataset = task.inputDataset
-
-  config.Data.ignoreLocality = task.getIgnoreLocality()
+  if len(task.vomsGroup) != 0:
+    config.User.voGroup = task.vomsGroup
+  if len(task.vomsRole) != 0:
+    config.User.voRole = task.vomsRole
 
   crabCommand('submit', config=config, dryrun=task.dryrun)
 

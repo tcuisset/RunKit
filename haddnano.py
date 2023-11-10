@@ -47,7 +47,7 @@ of.cd()
 
 for e in fileHandles[0].GetListOfKeys():
     name = e.GetName()
-    print("Merging" + str(name))
+    print("Merging " + str(name))
     obj = e.ReadObj()
     cl = ROOT.TClass.GetClass(e.GetClassName())
     inputs = ROOT.TList()

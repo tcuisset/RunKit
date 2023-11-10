@@ -7,7 +7,7 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .sh_tools import sh_call
+from .run_tools import ps_call
 
 def get_env(script, python_cmd='python3', singularity_cmd=None):
   magic_str = '---envToJson.py---'
@@ -15,7 +15,7 @@ def get_env(script, python_cmd='python3', singularity_cmd=None):
   cmd = f'{script}; echo {magic_str}; {python_cmd} -c "import json, os; print(json.dumps(dict(os.environ)))"'
   if singularity_cmd:
     cmd = f"{singularity_cmd} --command-to-run env -i bash -c '{cmd}'"
-  returncode, output, err = sh_call([cmd], shell=True, env={}, catch_stdout=True, split='\n')
+  returncode, output, err = ps_call([cmd], shell=True, env={}, catch_stdout=True, split='\n')
   for n, line in enumerate(output):
     if line == magic_str:
       break

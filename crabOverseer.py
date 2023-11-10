@@ -13,7 +13,8 @@ if __name__ == "__main__":
 
 from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
-from .sh_tools import ShCallError, sh_call, get_voms_proxy_info
+from .run_tools import PsCallError, ps_call, print_ts, timestamp_str
+from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn
 
 class TaskStat:
   summary_only_thr = 10
@@ -29,9 +30,31 @@ class TaskStat:
     self.failed = []
     self.tape_recall = []
     self.max_inactivity = None
+    self.n_files_total = 0
+    self.n_files_to_process = 0
+    self.n_files_processed = 0
+    self.n_files_ignored = 0
+    self.status = { "lastUpdate": "", "tasks": [] }
 
   def add(self, task):
     self.all_tasks.append(task)
+
+    n_files_total, n_files_processed, n_files_to_process, n_files_ignored = task.getFilesStats(useCacheOnly=False)
+    self.n_files_total += n_files_total
+    self.n_files_to_process += n_files_to_process
+    self.n_files_processed += n_files_processed
+    self.n_files_ignored += n_files_ignored
+    self.status["tasks"].append({
+      "name": task.name,
+      "status": task.taskStatus.status.name,
+      "recoveryIndex": task.recoveryIndex,
+      "n_files": n_files_total,
+      "n_processed": n_files_processed,
+      "n_to_process": n_files_to_process,
+      "n_ignored": n_files_ignored,
+      "grafana": task.taskStatus.dashboard_url,
+    })
+
     if task.taskStatus.status not in self.tasks_by_status:
       self.tasks_by_status[task.taskStatus.status] = []
     self.tasks_by_status[task.taskStatus.status].append(task)
@@ -60,12 +83,17 @@ class TaskStat:
     status_list = sorted(self.tasks_by_status.keys(), key=lambda x: x.value)
     n_tasks = len(self.all_tasks)
     status_list = [ f"{n_tasks} Total" ] + [ f"{len(self.tasks_by_status[x])} {x.name}" for x in status_list ]
-    print('Tasks: ' + ', '.join(status_list))
+    status_list_str = 'Tasks: ' + ', '.join(status_list)
+    self.status["tasksSummary"] = status_list_str
+    print(status_list_str)
     job_stat = [ f"{self.n_jobs} total" ] + \
                [ f'{cnt} {x.name}' for x, cnt in sorted(self.total_job_stat.items(), key=lambda a: a[0].value) ]
+    job_stat_str = 'Jobs in active tasks: ' + ', '.join(job_stat)
+    self.status["jobsSummary"] = job_stat_str
     if self.n_jobs > 0:
-      print('Jobs in active tasks: ' + ', '.join(job_stat))
-
+      print(job_stat_str)
+    print(f'Input files: {self.n_files_total} total, {self.n_files_processed} processed,'
+          f' {self.n_files_to_process} to_process, {self.n_files_ignored} ignored')
     if Status.InProgress in self.tasks_by_status:
       if len(self.tasks_by_status[Status.InProgress]) > TaskStat.summary_only_thr:
         if(len(self.max_job_stat.items())):
@@ -105,11 +133,6 @@ class TaskStat:
       print(f"Failed tasks that require manual intervention: {', '.join(names)}")
 
 
-def timestamp_str():
-  t = datetime.datetime.now()
-  t_str = t.strftime('%Y-%m-%d %H:%M:%S')
-  return f'[{t_str}] '
-
 def sanity_checks(task):
   abnormal_inactivity_thr = 24
 
@@ -145,7 +168,7 @@ def sanity_checks(task):
   return True
 
 def update(tasks, no_status_update=False):
-  print(timestamp_str() + "Updating...")
+  print_ts("Updating...")
   stat = TaskStat()
   to_post_process = []
   to_run_locally = []
@@ -163,7 +186,6 @@ def update(tasks, no_status_update=False):
     sanity_checks(task)
     if task.taskStatus.status == Status.CrabFinished:
       if task.checkCompleteness():
-        task.preparePostProcessList()
         done_flag = task.getPostProcessingDoneFlagFile()
         if os.path.exists(done_flag):
           os.remove(done_flag)
@@ -173,7 +195,16 @@ def update(tasks, no_status_update=False):
           to_run_locally.append(task)
     stat.add(task)
   stat.report()
-  return to_post_process, to_run_locally
+  stat.status["lastUpdate"] = timestamp_str()
+  for task in to_run_locally:
+    files_to_process = task.getFilesToProcess()
+    for job_id, job_files in task.getGridJobs().items():
+      for job_file in job_files:
+        if job_file in files_to_process:
+          done_flag = task.getGridJobDoneFlagFile(job_id)
+          if os.path.exists(done_flag):
+            os.remove(done_flag)
+  return to_post_process, to_run_locally, stat.status
 
 def apply_action(action, tasks, task_selection, task_list_path):
   selected_tasks = []
@@ -195,12 +226,17 @@ def apply_action(action, tasks, task_selection, task_list_path):
       print(f'{task.name}: files to process')
       for file in task.getFilesToProcess():
         print(f'  {file}')
+  elif action == 'check_failed':
+    print('Checking files availability for failed tasks...')
+    for task in selected_tasks:
+      if task.taskStatus.status == Status.Failed:
+        task.checkFilesToProcess()
   elif action == 'kill':
     for task in selected_tasks:
       print(f'{task.name}: sending kill request...')
       try:
         task.kill()
-      except ShCallError as e:
+      except PsCallError as e:
         print(f'{task.name}: error sending kill request. {e}')
   elif action == 'remove':
     for task in selected_tasks:
@@ -211,10 +247,11 @@ def apply_action(action, tasks, task_selection, task_list_path):
       json.dump([task_name for task_name in tasks], f, indent=2)
   elif action == 'remove_final_output':
     for task in selected_tasks:
-      task_output = task.getFinalOutput()
-      print(f'{task.name}: removing final output "{task_output}"...')
-      if os.path.exists(task_output):
-        shutil.rmtree(task_output)
+      for output in task.getOutputs():
+        task_output = output['finalOutput']
+        print(f'{task.name}: removing final output "{task_output}"...')
+        if os.path.exists(task_output):
+          shutil.rmtree(task_output)
   else:
     raise RuntimeError(f'Unknown action = "{action}"')
 
@@ -267,19 +304,49 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     apply_action(action, tasks, task_selection, task_list_path)
     return
 
+  if task_selection is not None:
+    selected_tasks = {}
+    for task_name, task in tasks.items():
+      if eval(task_selection):
+        selected_tasks[task_name] = task
+    tasks = selected_tasks
+
   for name, task in tasks.items():
     task.checkConfigurationValidity()
 
   update_interval = main_cfg.get('updateInterval', 60)
+  vomsToken = get_voms_proxy_info()['path']
+  htmlUpdated = False
 
   while True:
     last_update = datetime.datetime.now()
-    to_post_process, to_run_locally = update(tasks, no_status_update=no_status_update)
+    to_post_process, to_run_locally, status = update(tasks, no_status_update=no_status_update)
+
+    status_path = os.path.join(work_area, 'status.json')
+    with(open(status_path, 'w')) as f:
+      json.dump(status, f, indent=2)
+    htmlReportDest = main_cfg.get('htmlReport', '')
+    if len(htmlReportDest) > 0:
+      if htmlReportDest.startswith('T'):
+        server, lfn = htmlReportDest.split(':')
+        htmlReportDest = lfn_to_pfn(server, lfn)
+      file_dir = os.path.dirname(os.path.abspath(__file__))
+      filesToCopy = [ status_path ]
+      if not htmlUpdated:
+        for file in [ 'index.html', 'jquery.min.js', 'jsgrid.css', 'jsgrid.min.js', 'jsgrid-theme.css']:
+          filesToCopy.append(os.path.join(file_dir, 'html', file))
+      for file in filesToCopy:
+        _, fileName = os.path.split(file)
+        dest = os.path.join(htmlReportDest, fileName)
+        gfal_copy_safe(file, dest, voms_token=vomsToken, verbose=0)
+      print(f'HTML report is updated in {htmlReportDest}.')
+      htmlUpdated = True
+
     if len(to_run_locally) > 0 or len(to_post_process) > 0:
       if len(to_run_locally) > 0:
-        print(timestamp_str() + "To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))
+        print_ts("To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))
       if len(to_post_process) > 0:
-        print(timestamp_str() + "Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
+        print_ts("Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
       local_proc_params = main_cfg['localProcessing']
       law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
       law_task_dir = os.path.join(law_sub_dir, local_proc_params['lawTask'])
@@ -301,10 +368,10 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       ]
       if 'requirements' in local_proc_params:
         cmd.extend(['--requirements', local_proc_params['requirements']])
-      sh_call(cmd)
+      ps_call(cmd)
       for task in to_post_process + to_run_locally:
         task.updateStatusFromFile()
-      print(timestamp_str() + "Local grid processing iteration finished.")
+      print_ts("Local grid processing iteration finished.")
     has_unfinished = False
     for task_name, task in tasks.items():
       if task.taskStatus.status not in [ Status.PostProcessingFinished, Status.Failed ]:
@@ -315,13 +382,13 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     delta_t = (datetime.datetime.now() - last_update).total_seconds() / 60
     to_sleep = int(update_interval - delta_t)
     if to_sleep >= 1:
-      print(f"\n{timestamp_str()}Waiting for {to_sleep} minutes until the next update. Press return to exit.")
+      print_ts(f"Waiting for {to_sleep} minutes until the next update. Press return to exit.", prefix='\n')
       rlist, wlist, xlist = select.select([sys.stdin], [], [], to_sleep * 60)
       if rlist:
-        print(timestamp_str() + "Exiting...")
+        print_ts("Exiting...")
         break
     if main_cfg.get('renewKerberosTicket', False):
-      sh_call(['kinit', '-R'])
+      ps_call(['kinit', '-R'])
   if not has_unfinished:
     print("All tasks are done.")
 

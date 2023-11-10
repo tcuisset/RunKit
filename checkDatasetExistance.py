@@ -1,15 +1,15 @@
 import json
 import sys
-from sh_tools import sh_call
+from run_tools import ps_call
 
 if __name__ == '__main__':
   for dataset in sys.argv[1:]:
     try:
       if dataset.endswith("USER"): # Embedded samples
-        _, output, _ = sh_call(['dasgoclient', '--json', '--query', f'dataset dataset={dataset} instance=prod/phys03'],
+        _, output, _ = ps_call(['dasgoclient', '--json', '--query', f'dataset dataset={dataset} instance=prod/phys03'],
                                catch_stdout=True)
-      else: 
-        _, output, _ = sh_call(['dasgoclient', '--json', '--query', f'dataset dataset={dataset}'],
+      else:
+        _, output, _ = ps_call(['dasgoclient', '--json', '--query', f'dataset dataset={dataset}'],
                                catch_stdout=True)
       entries = json.loads(output)
       #print(json.dumps(info, indent=2))

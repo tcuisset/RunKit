@@ -3,7 +3,8 @@ import luigi
 import os
 import re
 
-from .sh_tools import sh_call, get_voms_proxy_info
+from .run_tools import ps_call
+from .grid_tools import get_voms_proxy_info
 
 class CreateVomsProxy(law.Task):
   time_limit = luigi.Parameter(default='24')
@@ -24,7 +25,7 @@ class CreateVomsProxy(law.Task):
   def create_proxy(self, proxy_file):
     self.publish_message("Creating voms proxy...")
     proxy_file.makedirs()
-    sh_call(['voms-proxy-init', '-voms', 'cms', '-rfc', '-valid', '192:00', '--out', proxy_file.path])
+    ps_call(['voms-proxy-init', '-voms', 'cms', '-rfc', '-valid', '192:00', '--out', proxy_file.path])
 
   def run(self):
     proxy_file = self.output()

@@ -120,7 +120,8 @@ filesToTransfer:
   - RunKit/crabJob.py
   - RunKit/crabJob_nanoProd.py
   - RunKit/skim_tree.py
-  - RunKit/sh_tools.py
+  - RunKit/run_tools.py
+  - RunKit/grid_tools.py
   - NanoProd/config/skim_htt.yaml
   - NanoProd/python/customize.py
 site: T2_CH_CERN
@@ -187,7 +188,7 @@ config:
   params:
     sampleType: mc
     era: Run2_2018
-    storeFailed: True
+
 
 TTTo2L2Nu: /TTTo2L2Nu_TuneCP5_13TeV-powheg-pythia8/RunIISummer20UL18MiniAODv2-106X_upgrade2018_realistic_v16_L1v1-v1/MINIAODSIM
 TTToHadronic: /TTToHadronic_TuneCP5_13TeV-powheg-pythia8/RunIISummer20UL18MiniAODv2-106X_upgrade2018_realistic_v16_L1v1-v1/MINIAODSIM

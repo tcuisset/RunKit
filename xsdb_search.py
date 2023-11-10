@@ -11,7 +11,7 @@ if __name__ == "__main__":
   sys.path.append(os.path.dirname(file_dir))
   __package__ = 'RunKit'
 
-from .sh_tools import sh_call
+from .run_tools import ps_call
 
 def search_xsdb(query_dict):
   base_url = 'https://cms-gen-dev.cern.ch/xsdb'
@@ -24,7 +24,7 @@ def search_xsdb(query_dict):
   query_str = json.dumps(query)
   home = os.environ['HOME']
   cookie = os.path.join(home, 'private/xsdbdev-cookie.txt')
-  sh_call([ 'cern-get-sso-cookie', '-u', base_url, '--krb', '-r', '-o', cookie ],
+  ps_call([ 'cern-get-sso-cookie', '-u', base_url, '--krb', '-r', '-o', cookie ],
           env={'KRB5CCNAME': os.environ['KRB5CCNAME']})
 
   bytes_io = io.BytesIO()

@@ -1,6 +1,15 @@
 import os
 import shutil
-from sh_tools import sh_call
+import sys
+
+if len(__package__) == 0:
+  file_dir = os.path.dirname(os.path.abspath(__file__))
+  base_dir = os.path.dirname(file_dir)
+  if base_dir not in sys.path:
+    sys.path.append(base_dir)
+  __package__ = os.path.split(file_dir)[-1]
+
+from .run_tools import ps_call
 
 def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args, cfg_params):
   run_cmsRun = True
@@ -33,7 +42,7 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
     cmssw_cmd = [ 'cmsRun',  '-j', cmssw_report, cfg_name, f'inputFiles={input_file}', f'output={output_file}',
                   f'maxEvents={cfg_params.maxEvents}' ]
     cmssw_cmd.extend(cmsRunOptions)
-    sh_call(cmssw_cmd, verbose=1)
+    ps_call(cmssw_cmd, verbose=1)
 
   if run_skim:
     output_name, output_ext = os.path.splitext(output_file)
@@ -42,10 +51,10 @@ def processFile(input_file, output_file, tmp_files, cmssw_report, cmd_line_args,
     skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
     cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
                 '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetup, '--skip-empty', '--verbose', '1']
-    sh_call(cmd_line, verbose=1)
+    ps_call(cmd_line, verbose=1)
 
     if store_failed:
       cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output_file,
                   '--config', cfg_params.skimCfg, '--setup', cfg_params.skimSetupFailed,
                    '--skip-empty', '--update-output', '--verbose', '1']
-      sh_call(cmd_line, verbose=1)
+      ps_call(cmd_line, verbose=1)

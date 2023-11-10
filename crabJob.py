@@ -4,10 +4,17 @@ import json
 import os
 import shutil
 import sys
-import tarfile
 import traceback
 
-from sh_tools import ShCallError, copy_remote_file
+if __name__ == "__main__":
+  file_dir = os.path.dirname(os.path.abspath(__file__))
+  base_dir = os.path.dirname(file_dir)
+  if base_dir not in sys.path:
+    sys.path.append(base_dir)
+  __package__ = os.path.split(file_dir)[-1]
+
+from .run_tools import PsCallError
+from .grid_tools import gfal_copy_safe, copy_remote_file, get_voms_proxy_info, GfalError
 
 _error_msg_fmt = '''
 <FrameworkError ExitStatus="{}" Type="Fatal error" >
@@ -93,18 +100,7 @@ def convertParams(cfg_params):
     setattr(params, param_name, param_value.value())
   return params
 
-def projectTime(timestamps, verbose=1):
-  if len(timestamps) < 2:
-    return 0
-  delta_t = (timestamps[-1] - timestamps[0]).total_seconds() / 60 / 60
-  n_processed = len(timestamps) - 1
-  projected_time = delta_t * (n_processed + 1) / n_processed
-  if verbose > 0:
-    print(f"Processed {n_processed} files in {delta_t:.2f} hours." + \
-          f" Projected {projected_time:.2f} hours to process {n_processed + 1} files.")
-  return projected_time
-
-def processFile(jobModule, file_id, input_file, output_file, cmd_line_args, params):
+def processFile(jobModule, file_id, input_file, outputs, cmd_line_args, params, voms_token):
   cmssw_report = f'{_cmssw_report_name}_{file_id}{_cmssw_report_ext}'
   result = False
   tmp_files = []
@@ -116,14 +112,15 @@ def processFile(jobModule, file_id, input_file, output_file, cmd_line_args, para
     else:
       local_file = f'input_{file_id}.root'
       tmp_files.append(local_file)
-      copy_remote_file(input_file, local_file, inputDBS=params.inputDBS, custom_pfns_prefix=params.PFNSprefix, verbose=1)
+      copy_remote_file(input_file, local_file, inputDBS=params.inputDBS, custom_pfns_prefix=params.inputPFNSprefix, verbose=1)
       module_input_file = f'file:{local_file}'
-    jobModule.processFile(module_input_file, output_file, tmp_files, cmssw_report, cmd_line_args, params)
+    jobModule.processFile(module_input_file, outputs, tmp_files, cmssw_report, cmd_line_args, params)
+    for output in outputs:
+      if len(output['output_pfn']):
+        gfal_copy_safe(output['file_name'], os.path.join(output['output_pfn'], output['file_name']),
+                       voms_token, verbose=1)
     result = True
-  except ShCallError as e:
-    print(traceback.format_exc())
-    exception = e
-  except Exception as e:
+  except (GfalError, PsCallError, Exception) as e:
     print(traceback.format_exc())
     exception = e
   if os.path.exists(cmssw_report) and (not os.path.exists(_cmssw_report) or result):
@@ -131,12 +128,12 @@ def processFile(jobModule, file_id, input_file, output_file, cmd_line_args, para
   for file in tmp_files:
     if os.path.exists(file):
       os.remove(file)
-  if not result and os.path.exists(output_file):
-    os.remove(output_file)
+  for output in outputs:
+    if len(output['output_pfn']) > 0 and os.path.exists(output['file_name']):
+      os.remove(output['file_name'])
   return result, exception
 
 def runJob(cmd_line_args):
-  timestamps = [ datetime.datetime.now() ]
   pset_path = 'PSet.py'
   if not os.path.exists(pset_path):
     pset_path = os.path.join(os.getenv("CMSSW_BASE"), 'src', 'PSet.py')
@@ -147,46 +144,54 @@ def runJob(cmd_line_args):
   cfg_params = convertParams(PSet.process.exParams)
   cfg_params.maxEvents = PSet.process.maxEvents.input.value()
   jobModule = load(cfg_params.jobModule)
-  outputFileBase, outputExt = os.path.splitext(cfg_params.output)
+
+  outputs = []
+  for output in cfg_params.output:
+    output = output.split(';')
+    if len(output) not in [1, 2, 4, 5]:
+      raise RuntimeError(f'Invalid output format: {output}')
+    while len(output) < 5:
+      output.append('')
+    output_desc = {}
+    for i, key in enumerate(['file', 'output_pfn', 'skim_cfg', 'skim_setup', 'skim_setup_failed']):
+      if len(output) >= i + 1 and len(output[i]) > 0:
+        output_desc[key] = output[i]
+    if 'file' not in output_desc:
+      raise RuntimeError(f'Empty output file name.')
+    outputs.append(output_desc)
+
+  voms_token = get_voms_proxy_info()['path']
+
   if len(cfg_params.datasetFiles) > 0:
     with open(cfg_params.datasetFiles, 'r') as f:
       datasetFiles = json.load(f)
   else:
     datasetFiles = None
 
-  output_files = []
+  has_at_least_one_success = False
   for file_index, file in enumerate(list(PSet.process.source.fileNames)):
-    if not cfg_params.mustProcessAllInputs and projectTime(timestamps) > cfg_params.maxRuntime:
-      break
     if cfg_params.maxFiles > 0 and file_index >= cfg_params.maxFiles:
       break
     file_id = datasetFiles[file] if datasetFiles else file_index
-    output_file = f'{outputFileBase}_{file_id}{outputExt}'
-    result, exception = processFile(jobModule, file_id, file, output_file, cmd_line_args, cfg_params)
-    timestamps.append(datetime.datetime.now())
+    for output in outputs:
+      outputFileBase, outputExt = os.path.splitext(output['file'])
+      output['file_name'] = f'{outputFileBase}_{file_id}{outputExt}'
+    result, exception = processFile(jobModule, file_id, file, outputs, cmd_line_args, cfg_params, voms_token)
     if result:
-      output_files.append(output_file)
+      has_at_least_one_success = True
     else:
       print(f"Failed to process {file}")
       if cfg_params.mustProcessAllInputs:
         raise exception
 
-  if len(output_files) == 0:
-    raise RuntimeError("No output files were produced.")
-
-  if cfg_params.createTar:
-    tar_name = 'output.tar'
-    tmp_tar_name = '.' + tar_name
-    with tarfile.open(tmp_tar_name, 'w') as tar:
-      for file in output_files:
-        tar.add(file)
-    shutil.move(tmp_tar_name, tar_name)
+  if not has_at_least_one_success:
+    raise RuntimeError("Processing has failed for all input files.")
 
 if __name__ == "__main__":
   try:
     runJob(sys.argv[1:])
     exit(0)
-  except ShCallError as e:
+  except PsCallError as e:
     print(traceback.format_exc())
     exit(e.return_code, str(e))
   except Exception as e:
