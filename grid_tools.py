@@ -93,12 +93,12 @@ def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2
                    expected_adler32sum=None, n_retries=4, retry_sleep_interval=10, verbose=1):
   if voms_token is None:
     voms_token = get_voms_proxy_info()['path']
-  try:
-    expected_adler32sum = gfal_sum(input_file, voms_token=voms_token, sum_type='adler32')
-  except GfalError as e:
-    if verbose > 0:
-      print(f'WARNING: gfal_sum failed for "{input_file}".\n{e}')
-    expected_adler32sum = None
+  if expected_adler32sum is None:
+    try:
+      expected_adler32sum = gfal_sum(input_file, voms_token=voms_token, sum_type='adler32')
+    except GfalError as e:
+      if verbose > 0:
+        print(f'WARNING: gfal_sum failed for "{input_file}".\n{e}')
   output_file_tmp = output_file + '.tmp'
   def download():
     if gfal_exists(output_file, voms_token=voms_token):

@@ -38,14 +38,12 @@ class TaskStat:
 
   def add(self, task):
     self.all_tasks.append(task)
-    if task.taskStatus.status not in self.tasks_by_status:
-      self.tasks_by_status[task.taskStatus.status] = []
+
     n_files_total, n_files_processed, n_files_to_process, n_files_ignored = task.getFilesStats(useCacheOnly=False)
     self.n_files_total += n_files_total
     self.n_files_to_process += n_files_to_process
     self.n_files_processed += n_files_processed
     self.n_files_ignored += n_files_ignored
-
     self.status["tasks"].append({
       "name": task.name,
       "status": task.taskStatus.status.name,
@@ -57,6 +55,8 @@ class TaskStat:
       "grafana": task.taskStatus.dashboard_url,
     })
 
+    if task.taskStatus.status not in self.tasks_by_status:
+      self.tasks_by_status[task.taskStatus.status] = []
     self.tasks_by_status[task.taskStatus.status].append(task)
     if task.taskStatus.status == Status.InProgress:
       for job_status, count in task.taskStatus.job_stat.items():
@@ -186,7 +186,6 @@ def update(tasks, no_status_update=False):
     sanity_checks(task)
     if task.taskStatus.status == Status.CrabFinished:
       if task.checkCompleteness():
-        task.prepareForPostProcess()
         done_flag = task.getPostProcessingDoneFlagFile()
         if os.path.exists(done_flag):
           os.remove(done_flag)
@@ -197,6 +196,14 @@ def update(tasks, no_status_update=False):
     stat.add(task)
   stat.report()
   stat.status["lastUpdate"] = timestamp_str()
+  for task in to_run_locally:
+    files_to_process = task.getFilesToProcess()
+    for job_id, job_files in task.getGridJobs().items():
+      for job_file in job_files:
+        if job_file in files_to_process:
+          done_flag = task.getGridJobDoneFlagFile(job_id)
+          if os.path.exists(done_flag):
+            os.remove(done_flag)
   return to_post_process, to_run_locally, stat.status
 
 def apply_action(action, tasks, task_selection, task_list_path):
@@ -219,6 +226,11 @@ def apply_action(action, tasks, task_selection, task_list_path):
       print(f'{task.name}: files to process')
       for file in task.getFilesToProcess():
         print(f'  {file}')
+  elif action == 'check_failed':
+    print('Checking files availability for failed tasks...')
+    for task in selected_tasks:
+      if task.taskStatus.status == Status.Failed:
+        task.checkFilesToProcess()
   elif action == 'kill':
     for task in selected_tasks:
       print(f'{task.name}: sending kill request...')
@@ -291,6 +303,13 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
   if action is not None:
     apply_action(action, tasks, task_selection, task_list_path)
     return
+
+  if task_selection is not None:
+    selected_tasks = {}
+    for task_name, task in tasks.items():
+      if eval(task_selection):
+        selected_tasks[task_name] = task
+    tasks = selected_tasks
 
   for name, task in tasks.items():
     task.checkConfigurationValidity()

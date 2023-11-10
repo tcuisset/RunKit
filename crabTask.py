@@ -2,11 +2,10 @@ import copy
 import datetime
 import json
 import os
-import re
 import shutil
 import sys
-import tarfile
-import time
+import tempfile
+import traceback
 
 if __name__ == "__main__":
   file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -14,8 +13,9 @@ if __name__ == "__main__":
   __package__ = 'RunKit'
 
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
-from .run_tools import PsCallError, ps_call, natural_sort, timestamp_str
-from .grid_tools import get_voms_proxy_info, lfn_to_pfn, gfal_copy_safe, gfal_ls_safe
+from .run_tools import PsCallError, ps_call, natural_sort, timestamp_str, adler32sum
+from .grid_tools import get_voms_proxy_info, lfn_to_pfn, gfal_copy_safe, gfal_ls_safe, das_file_pfns, \
+                        gfal_copy, GfalError
 from .envToJson import get_cmsenv
 from .getFileRunLumi import getFileRunLumi
 
@@ -355,12 +355,10 @@ class Task:
       self.saveCfg()
     return self.taskIds[recoveryIndex]
 
-  def prepareForPostProcess(self):
+  def postProcessOutputs(self, job_home):
     missingFiles = self.getFilesToProcess()
     if len(missingFiles) > 0:
       raise RuntimeError(f'{self.name}: missing outputs for following input files: ' + ' '.join(missingFiles))
-
-  def postProcessOutputs(self, job_home):
     haddnanoEx_path = os.path.join(os.path.dirname(__file__), 'haddnanoEx.py')
     datasetFiles = self.getDatasetFiles()
     processedFiles = self.getProcessedFiles()
@@ -469,14 +467,23 @@ class Task:
         self.taskStatus.details[str(job_id)] = { "State": job_status }
       jobIds = self.selectJobIds([JobStatus.finished], invert=True)
       if len(jobIds) == 0:
-        self.taskStatus.status = Status.CrabFinished
+        filesToProcess = self.getFilesToProcess()
+        if len(filesToProcess) == 0:
+          self.taskStatus.status = Status.CrabFinished
+      jobIds = self.selectJobIds([JobStatus.failed])
+      if len(jobIds) != 0:
+        self.taskStatus.status = Status.Failed
       self.saveStatus()
-      neen_local_run = self.taskStatus.status != Status.CrabFinished
+      neen_local_run = self.taskStatus.status not in [ Status.CrabFinished, Status.Failed ]
     else:
       returncode, output, err = ps_call(['crab', 'status', '--json', '-d', self.crabArea()],
                                         catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout,
                                         env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
       self.taskStatus = LogEntryParser.Parse(output)
+      if self.taskStatus.status == Status.CrabFinished:
+        filesToProcess = self.getFilesToProcess()
+        if len(filesToProcess) != 0:
+          self.taskStatus.status = Status.WaitingForRecovery
       self.saveStatus()
       with open(self.lastCrabStatusLog(), 'w') as f:
         f.write('\n'.join(output))
@@ -575,24 +582,30 @@ class Task:
 
   def runJobLocally(self, job_id, job_home):
     print(f'{self.name}: running job {job_id} locally in {job_home}.')
-    if not os.path.exists(job_home):
-      os.makedirs(job_home)
+    try:
+      if not os.path.exists(job_home):
+        os.makedirs(job_home)
 
-    ana_path = os.environ['ANALYSIS_PATH']
-    for file in self.getFilesToTransfer(appendDatasetFiles=False):
-      shutil.copy(os.path.join(ana_path, file), job_home)
-    cmd = [ 'python3', os.path.join(ana_path, self.cmsswPython), f'datasetFiles={self.getDatasetFilesPath()}',
-            'writePSet=True', 'mustProcessAllInputs=True' ]
-    cmd.extend(self.getParams(appendDatasetFiles=False))
-    file_list = [ file for file in self.getGridJobs()[job_id] if file not in self.ignoreFiles ]
-    if len(file_list) > 0:
-      file_list = ','.join(file_list)
-      cmd.append(f'inputFiles={file_list}')
-      ps_call(cmd, cwd=job_home, env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
-      _, scriptName = os.path.split(self.scriptExe)
-      ps_call([ os.path.join(job_home, scriptName) ], shell=True, cwd=job_home, env=self.getCmsswEnv(),
-              singularity_cmd=self.singularity_cmd)
-    return True
+      ana_path = os.environ['ANALYSIS_PATH']
+      for file in self.getFilesToTransfer(appendDatasetFiles=False):
+        shutil.copy(os.path.join(ana_path, file), job_home)
+      cmd = [ 'python3', os.path.join(ana_path, self.cmsswPython), f'datasetFiles={self.getDatasetFilesPath()}',
+              'writePSet=True', 'mustProcessAllInputs=True' ]
+      cmd.extend(self.getParams(appendDatasetFiles=False))
+      file_list = [ file for file in self.getGridJobs()[job_id] if file not in self.ignoreFiles ]
+      if len(file_list) > 0:
+        file_list = ','.join(file_list)
+        cmd.append(f'inputFiles={file_list}')
+        ps_call(cmd, cwd=job_home, env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd, verbose=1)
+        _, scriptName = os.path.split(self.scriptExe)
+        ps_call([ 'sh', os.path.join(job_home, scriptName) ], cwd=job_home, env=self.getCmsswEnv(),
+                singularity_cmd=self.singularity_cmd, verbose=1)
+      return True
+    except:
+      print(traceback.format_exc())
+      print(f'{self.name}: failed to run job {job_id}.')
+    return False
+
 
   def kill(self):
     if self.isInLocalRunMode():
@@ -621,7 +634,7 @@ class Task:
         filePath = os.path.join(output['crabOutput'], fileName)
         if output["file"] not in ls_result:
           ls_result[output["file"]] = {}
-          ls_files = gfal_ls_safe(output['crabOutput'], voms_token=self.getVomsToken(), verbose=0)
+          ls_files = gfal_ls_safe(output['crabOutput'], catch_stderr=True, voms_token=self.getVomsToken(), verbose=0)
           if ls_files is not None:
             for file_info in ls_files:
               ls_result[output["file"]][file_info.name] = file_info
@@ -663,6 +676,39 @@ class Task:
       print(f'{self.name}: task is not complete. The following files still needs to be processed: {filesToProcess}')
       return False
     return True
+
+  def checkFilesToProcess(self):
+    filesToProcess = self.getFilesToProcess()
+    print(f'{self.name} dataset={self.inputDBS}')
+    tmp_dir = tempfile.mkdtemp(dir=os.environ['TMPDIR'])
+    pfnsPrefix = self.params.get('inputPFNSprefix', None)
+    for file in filesToProcess:
+      file_out = os.path.join(tmp_dir, os.path.basename(file))
+      print(f'  {file}')
+      sources = []
+      if pfnsPrefix is not None:
+        sources = [ pfnsPrefix + file ]
+        expected_adler32sum = None
+      else:
+        sources, expected_adler32sum = das_file_pfns(file, disk_only=False, return_adler32=True,
+                                                     inputDBS=self.inputDBS, verbose=0)
+      for pfn in sources:
+        ok = True
+        try:
+          gfal_copy(pfn, file_out, voms_token=self.getVomsToken(), verbose=0)
+          if expected_adler32sum is not None:
+            asum = adler32sum(file_out)
+            if asum != expected_adler32sum:
+              msg = f'adler32sum mismatch. Expected = {expected_adler32sum:x}, got = {asum:x}.'
+              ok = False
+        except GfalError as e:
+          msg = 'gfal-copy failed'
+          ok = False
+        if os.path.exists(file_out):
+          os.remove(file_out)
+        if ok:
+          msg = "OK"
+        print(f'    {pfn}: {msg}')
 
   def updateConfig(self, mainCfg, taskCfg):
     taskName = self.name

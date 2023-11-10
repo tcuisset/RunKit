@@ -33,12 +33,14 @@ def ps_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=Tru
   else:
     full_cmd = cmd
   cmd_str = []
-  for s in full_cmd:
+  for s in cmd:
     if ' ' in s:
       s = f"'{s}'"
     cmd_str.append(s)
   cmd_str = ' '.join(cmd_str)
   if verbose > 0:
+    if singularity_cmd is not None:
+      print(f'Entering {singularity_cmd} ...', file=sys.stderr)
     print(f'>> {cmd_str}', file=sys.stderr)
   kwargs = {
     'shell': shell,

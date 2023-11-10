@@ -14,7 +14,7 @@
         .table {
             position:fixed;
             top: 140px;
-            bottom: 10px;
+            bottom: 25px;
         }
     </style>
 </head>
@@ -35,10 +35,11 @@
 
     <script>
         function find_match(value, filter) {
-            if(Object.is(filter, null) || Object.is(filter, undefined)) return true;
-            if(Object.is(value, null) || Object.is(value, undefined)) return false;
-            var v_str = value.toString().toLowerCase();
+            if(filter == null || filter == undefined) return true;
             var f_str = filter.toString().toLowerCase();
+            if(f_str.length == 0) return true;
+            if(value == null || value == undefined) return false;
+            var v_str = value.toString().toLowerCase();
             return v_str.indexOf(f_str) > -1;
         }
 
@@ -60,11 +61,11 @@
             { name: "n_processed", title: "Processed files", type: "number", width: 50, editing: false },
             { name: "n_to_process", title: "Files to process", type: "number", width: 50, editing: false },
             { name: "n_ignored", title: "Ignored files", type: "number", width: 50, editing: false },
-            { name: "grafana", title: "Dashboard", type: "text", width: 50, editing: false,
+            { name: "grafana", title: "Dashboard", type: "textarea", width: 50, editing: false,
               itemTemplate: function(value) {
-                    var x = $("<a>").attr("href", value).attr("target", "_blank");
-                    if (value && value.length > 0) {
-                        x.text("link");
+                    var x = $("<a>");
+                    if (value != null && value != undefined && value.length > 0) {
+                        x.attr("href", value).attr("target", "_blank").text("link");
                     }
                     return x;
                 } },
