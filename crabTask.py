@@ -21,7 +21,7 @@ from .getFileRunLumi import getFileRunLumi
 
 class Task:
   _taskCfgProperties = [
-    'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'filesToTransfer',
+    'cmsswPython', 'params', 'unitsPerJob', 'scriptExe', 'filesToTransfer',
     'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
     'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun',
     'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType'
@@ -44,7 +44,6 @@ class Task:
     self.inputDataset = ''
     self.cmsswPython = ''
     self.params = {}
-    self.splitting = ''
     self.unitsPerJob = -1
     self.scriptExe = ''
     self.filesToTransfer = []
@@ -89,7 +88,7 @@ class Task:
     def check_len(prop):
       check(len(getattr(self, prop)) > 0, prop)
 
-    for prop in [ 'cmsswPython', 'splitting', 'inputDBS', 'name', 'inputDataset' ]:
+    for prop in [ 'cmsswPython', 'inputDBS', 'name', 'inputDataset' ]:
       check_len(prop)
     check(self.unitsPerJob > 0, 'unitsPerJob')
     check(self.maxMemory > 0, 'maxMemory')
@@ -183,14 +182,12 @@ class Task:
     return self.isInputDatasetLocal() or recoveryIndex >= self.maxRecoveryCount
 
   def getUnitsPerJob(self):
-    if self.recoveryIndex >= self.maxRecoveryCount - 1:
+    if self.recoveryIndex >= self.maxRecoveryCount:
       return 1
     return max(self.unitsPerJob // (2 ** self.recoveryIndex), 1)
 
   def getSplitting(self):
-    if self.recoveryIndex > 0:
-      return 'FileBased'
-    return self.splitting
+    return 'FileBased'
 
   def getLumiMask(self):
     if self.recoveryIndex > 0:
@@ -198,12 +195,12 @@ class Task:
     return self.lumiMask
 
   def getMaxMemory(self):
-    if self.recoveryIndex == self.maxRecoveryCount:
+    if self.recoveryIndex == self.maxRecoveryCount - 1:
       return max(self.maxMemory, 4000)
     return self.maxMemory
 
   def getWhiteList(self):
-    if self.recoveryIndex == self.maxRecoveryCount:
+    if self.recoveryIndex == self.maxRecoveryCount - 1:
       return self.whitelistFinalRecovery
     return self.whitelist
 
@@ -211,7 +208,7 @@ class Task:
     return self.blacklist
 
   def getIgnoreLocality(self):
-    if self.recoveryIndex == self.maxRecoveryCount:
+    if self.recoveryIndex == self.maxRecoveryCount - 1:
       return True
     return self.ignoreLocality
 
