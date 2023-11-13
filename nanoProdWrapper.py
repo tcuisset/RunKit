@@ -20,6 +20,8 @@ options.register('maxRuntime', 20, VarParsing.multiplicity.singleton, VarParsing
                  "Maximal expected job runtime in hours.")
 options.register('maxFiles', -1, VarParsing.multiplicity.singleton, VarParsing.varType.int,
                  "Maximal number of files to process.")
+options.register('recoveryIndex', -1, VarParsing.multiplicity.singleton, VarParsing.varType.int,
+                 "If task recovery index >= 0, it will be used as a suffix in output file names.")
 options.register('customise', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
                  "Production customization code (if any)")
 options.register('customiseCmds', '', VarParsing.multiplicity.singleton, VarParsing.varType.string,
@@ -119,6 +121,7 @@ process.exParams = cms.untracked.PSet(
   output = cms.untracked.vstring(options.output),
   datasetFiles = cms.untracked.string(options.datasetFiles),
   maxFiles = cms.untracked.int32(options.maxFiles),
+  recoveryIndex = cms.untracked.int32(options.recoveryIndex),
   copyInputsToLocal = cms.untracked.bool(options.copyInputsToLocal),
   inputDBS = cms.untracked.string(options.inputDBS),
   inputPFNSprefix = cms.untracked.string(options.inputPFNSprefix),

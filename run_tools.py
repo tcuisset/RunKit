@@ -141,8 +141,7 @@ def adler32sum(file_name):
       asum = zlib.adler32(data, asum)
   return asum
 
-def repeat_until_success(fn, opt_list=([],), raise_error=True, error_message="", n_retries=4, retry_sleep_interval=10,
-                         verbose=1):
+def repeat_until_success(fn, opt_list=([],), exception=None, n_retries=4, retry_sleep_interval=10, verbose=1):
   for n in range(n_retries):
     for opt in opt_list:
       try:
@@ -156,8 +155,8 @@ def repeat_until_success(fn, opt_list=([],), raise_error=True, error_message="",
           print(f'Waiting for {retry_sleep_interval} seconds before the next try.')
         time.sleep(retry_sleep_interval)
 
-  if raise_error:
-    raise RuntimeError(error_message)
+  if exception is not None:
+    raise exception
   return False
 
 def natural_sort(l):

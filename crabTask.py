@@ -15,7 +15,7 @@ if __name__ == "__main__":
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
 from .run_tools import PsCallError, ps_call, natural_sort, timestamp_str, adler32sum
 from .grid_tools import get_voms_proxy_info, lfn_to_pfn, gfal_copy_safe, gfal_ls_safe, das_file_pfns, \
-                        gfal_copy, GfalError
+                        gfal_copy, GfalError, COPY_TMP_SUFFIX
 from .envToJson import get_cmsenv
 from .getFileRunLumi import getFileRunLumi
 
@@ -632,17 +632,26 @@ class Task:
     def collectOutputs(fileId):
       filePaths = {}
       for output in self.getOutputs():
-        fileName = f'{output["name"]}_{fileId}{output["ext"]}'
-        filePath = os.path.join(output['crabOutput'], fileName)
         if output["file"] not in ls_result:
           ls_result[output["file"]] = {}
           ls_files = gfal_ls_safe(output['crabOutput'], catch_stderr=True, voms_token=self.getVomsToken(), verbose=0)
           if ls_files is not None:
             for file_info in ls_files:
               ls_result[output["file"]][file_info.name] = file_info
-        if fileName not in ls_result[output["file"]]:
+        found = False
+        for recoveryIndex in range(-1, self.recoveryIndex + 1):
+          if recoveryIndex < 0:
+            fileName = f'{output["name"]}_{fileId}{output["ext"]}'
+          else:
+            fileName = f'{output["name"]}_{fileId}_{recoveryIndex}{output["ext"]}'
+          filePath = os.path.join(output['crabOutput'], fileName)
+          fileNameTmp = fileName + COPY_TMP_SUFFIX
+          if fileName in ls_result[output["file"]] and fileNameTmp not in ls_result[output["file"]]:
+            filePaths[output['file']] = filePath
+            found = True
+            break
+        if not found:
           return None
-        filePaths[output['file']] = filePath
       return filePaths
 
     if not useCacheOnly:
