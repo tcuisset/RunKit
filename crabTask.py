@@ -391,9 +391,10 @@ class Task:
         hadd_report = json.load(f)
       report['outputs'] = {}
       for haddOutput, inputList in hadd_report.items():
-        report['outputs'][haddOutput] = []
+        report['outputs'][haddOutput] = {}
         for haddInput in inputList:
-          report['outputs'][haddOutput].append(haddInputs[haddInput])
+          origInput = haddInputs[haddInput]
+          report['outputs'][haddOutput][origInput] = self.getFileRunLumi()[origInput]
       report['processingEnd'] = timestamp_str()
 
       report_file =f'prodReport_{outputNameBase}.json'
@@ -402,11 +403,6 @@ class Task:
       with open(report_tmp_path, 'w') as f:
         json.dump(report, f, indent=2)
       gfal_copy_safe(report_tmp_path, report_final_path, self.getVomsToken(), verbose=1)
-
-    self.taskStatus.status = Status.PostProcessingFinished
-    self.endDate = timestamp_str()
-    self.saveStatus()
-    self.saveCfg()
 
   def getPostProcessingDoneFlagFile(self):
     return os.path.join(self.workArea, 'post_processing_done.txt')

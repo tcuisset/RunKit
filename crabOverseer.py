@@ -188,8 +188,12 @@ def update(tasks, no_status_update=False):
       if task.checkCompleteness():
         done_flag = task.getPostProcessingDoneFlagFile()
         if os.path.exists(done_flag):
-          os.remove(done_flag)
-        to_post_process.append(task)
+          task.taskStatus.status = Status.PostProcessingFinished
+          task.endDate = timestamp_str()
+          task.saveStatus()
+          task.saveCfg()
+        else:
+          to_post_process.append(task)
       else:
         if task.recover():
           to_run_locally.append(task)
