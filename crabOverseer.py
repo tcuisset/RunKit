@@ -356,6 +356,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
 
       n_cpus = local_proc_params.get('nCPU', 1)
       max_runime = local_proc_params.get('maxRuntime', 24.0)
+      max_parallel_jobs = local_proc_params.get('maxParallelJobs', 1000)
       cmd = [ 'law', 'run', local_proc_params['lawTask'],
               '--workflow', local_proc_params['workflow'],
               '--bootstrap-path', local_proc_params['bootstrap'],
@@ -364,6 +365,7 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
               '--sub-dir', law_sub_dir,
               '--n-cpus', str(n_cpus),
               '--max-runtime', str(max_runime),
+              '--parallel-jobs', str(max_parallel_jobs)
               '--transfer-logs',
       ]
       if 'requirements' in local_proc_params:

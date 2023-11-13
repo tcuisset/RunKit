@@ -72,13 +72,15 @@ class Task:
     self.taskIds = {}
     self.lastJobStatusUpdate = -1.
     self.cmsswEnv = None
-    self.singularity_cmd = os.environ.get('CMSSW_SINGULARITY', None)
     self.gridJobs = None
     self.crabType = ''
     self.processedFilesCache = None
     self.vomsToken = None
     self.startDate = ''
     self.endDate = ''
+    self.singularity_cmd = os.environ.get('CMSSW_SINGULARITY', None)
+    if self.singularity_cmd is not None and len(self.singularity_cmd) == 0:
+      self.singularity_cmd = None
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
