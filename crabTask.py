@@ -601,7 +601,7 @@ class Task:
         ps_call([ 'sh', os.path.join(job_home, scriptName) ], cwd=job_home, env=self.getCmsswEnv(),
                 singularity_cmd=self.singularity_cmd, verbose=1)
       return True
-    except PsCallError:
+    except:
       print(traceback.format_exc())
       print(f'{self.name}: failed to run job {job_id}.')
     return False
