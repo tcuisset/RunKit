@@ -168,6 +168,7 @@ class Task:
           output_list.append(output['skimSetupFailed'])
       output_str = 'output=' + ';'.join(output_list)
       params.append(output_str)
+    params.append(f'recoveryIndex={self.recoveryIndex}')
     if appendDatasetFiles:
       datasetFileDir, datasetFileName = os.path.split(self.getDatasetFilesPath())
       params.append(f'datasetFiles={datasetFileName}')
@@ -182,7 +183,7 @@ class Task:
     return self.isInputDatasetLocal() or recoveryIndex >= self.maxRecoveryCount
 
   def getUnitsPerJob(self):
-    if self.recoveryIndex >= self.maxRecoveryCount:
+    if self.recoveryIndex >= self.maxRecoveryCount - 1:
       return 1
     return max(self.unitsPerJob // (2 ** self.recoveryIndex), 1)
 
@@ -195,12 +196,12 @@ class Task:
     return self.lumiMask
 
   def getMaxMemory(self):
-    if self.recoveryIndex == self.maxRecoveryCount - 1:
+    if self.recoveryIndex >= self.maxRecoveryCount - 1:
       return max(self.maxMemory, 4000)
     return self.maxMemory
 
   def getWhiteList(self):
-    if self.recoveryIndex == self.maxRecoveryCount - 1:
+    if self.recoveryIndex >= self.maxRecoveryCount - 1:
       return self.whitelistFinalRecovery
     return self.whitelist
 
@@ -416,14 +417,14 @@ class Task:
   def lastCrabStatusLog(self):
     return os.path.join(self.workArea, 'lastCrabStatus.txt')
 
-  def submit(self):
+  def submit(self, lawTaskManager=None):
     self.getDatasetFiles()
     if self.isInLocalRunMode():
       self.taskStatus = CrabTaskStatus()
-      self.taskStatus.status = Status.Submitted
+      self.taskStatus.status = Status.SubmittedToLocal
       self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
       self.taskStatus.status_on_scheduler = StatusOnScheduler.SUBMITTED
-      for job_id in self.getGridJobs():
+      for job_id in self.getGridJobs(lawTaskManager=lawTaskManager):
         self.taskStatus.details[str(job_id)] = { "State": "idle" }
       self.saveStatus()
       return True
@@ -444,15 +445,15 @@ class Task:
         raise e
       return False
 
-  def updateStatus(self):
+  def updateStatus(self, lawTaskManager=None):
     neen_local_run = False
     oldTaskStatus = self.taskStatus
     if self.isInLocalRunMode():
       self.taskStatus = CrabTaskStatus()
-      self.taskStatus.status = Status.Submitted
+      self.taskStatus.status = Status.SubmittedToLocal
       self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
       self.taskStatus.status_on_scheduler = StatusOnScheduler.SUBMITTED
-      for job_id in self.getGridJobs():
+      for job_id in self.getGridJobs(lawTaskManager=lawTaskManager):
         job_flag_file = self.getGridJobDoneFlagFile(job_id)
         if os.path.exists(job_flag_file):
           with open(job_flag_file, 'r') as f:
@@ -502,7 +503,7 @@ class Task:
       self.saveCfg()
     return neen_local_run
 
-  def recover(self):
+  def recover(self, lawTaskManager=None):
     filesToProcess = self.getFilesToProcess()
     if len(filesToProcess) == 0:
       print(f'{self.name}: no recovery is needed. All files have been processed.')
@@ -518,7 +519,7 @@ class Task:
         self.jobInputFiles = None
         self.lastJobStatusUpdate = -1.
         self.saveCfg()
-        self.submit()
+        self.submit(lawTaskManager=lawTaskManager)
         return True
       else:
         return self.updateStatus()
@@ -551,7 +552,7 @@ class Task:
   def gridJobsFile(self):
     return os.path.join(self.workArea, 'grid_jobs.json')
 
-  def getGridJobs(self):
+  def getGridJobs(self, lawTaskManager=None):
     if not self.isInLocalRunMode():
       return {}
     if self.gridJobs is None:
@@ -559,6 +560,8 @@ class Task:
         with open(self.gridJobsFile(), 'r') as f:
           self.gridJobs = { int(key) : value for key,value in json.load(f).items() }
       else:
+        if lawTaskManager is None:
+          raise RuntimeError(f'{self.name}: lawTaskManager needs to be set to create grid jobs.')
         self.gridJobs = {}
         job_id = 0
         units_per_job = self.getUnitsPerJob()
@@ -571,6 +574,8 @@ class Task:
               break
             else:
               job_id += 1
+        for grid_job_id in self.gridJobs:
+          lawTaskManager.add(self.workArea, grid_job_id, self.getGridJobDoneFlagFile(grid_job_id))
         with open(self.gridJobsFile(), 'w') as f:
           json.dump(self.gridJobs, f, indent=2)
     return self.gridJobs
@@ -596,7 +601,7 @@ class Task:
         ps_call([ 'sh', os.path.join(job_home, scriptName) ], cwd=job_home, env=self.getCmsswEnv(),
                 singularity_cmd=self.singularity_cmd, verbose=1)
       return True
-    except:
+    except PsCallError:
       print(traceback.format_exc())
       print(f'{self.name}: failed to run job {job_id}.')
     return False

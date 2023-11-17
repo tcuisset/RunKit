@@ -13,6 +13,7 @@ if __name__ == "__main__":
 
 from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
+from .crabLaw import LawTaskManager
 from .run_tools import PsCallError, ps_call, print_ts, timestamp_str
 from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn
 
@@ -132,7 +133,6 @@ class TaskStat:
       names = [ task.name for task in self.failed ]
       print(f"Failed tasks that require manual intervention: {', '.join(names)}")
 
-
 def sanity_checks(task):
   abnormal_inactivity_thr = 24
 
@@ -167,21 +167,21 @@ def sanity_checks(task):
 
   return True
 
-def update(tasks, no_status_update=False):
+def update(tasks, lawTaskManager, no_status_update=False):
   print_ts("Updating...")
   stat = TaskStat()
   to_post_process = []
   to_run_locally = []
   for task_name, task in tasks.items():
     if task.taskStatus.status == Status.Defined:
-      if task.submit():
+      if task.submit(lawTaskManager=lawTaskManager):
         to_run_locally.append(task)
     elif task.taskStatus.status.value < Status.CrabFinished.value:
       if task.taskStatus.status.value < Status.WaitingForRecovery.value and not no_status_update:
-        if task.updateStatus():
+        if task.updateStatus(lawTaskManager=lawTaskManager):
           to_run_locally.append(task)
       if task.taskStatus.status == Status.WaitingForRecovery:
-        if task.recover():
+        if task.recover(lawTaskManager=lawTaskManager):
           to_run_locally.append(task)
     sanity_checks(task)
     if task.taskStatus.status == Status.CrabFinished:
@@ -193,21 +193,15 @@ def update(tasks, no_status_update=False):
           task.saveStatus()
           task.saveCfg()
         else:
+          lawTaskManager.add(task.workArea, -1, done_flag)
           to_post_process.append(task)
       else:
-        if task.recover():
+        if task.recover(lawTaskManager=lawTaskManager):
           to_run_locally.append(task)
     stat.add(task)
   stat.report()
   stat.status["lastUpdate"] = timestamp_str()
-  for task in to_run_locally:
-    files_to_process = task.getFilesToProcess()
-    for job_id, job_files in task.getGridJobs().items():
-      for job_file in job_files:
-        if job_file in files_to_process:
-          done_flag = task.getGridJobDoneFlagFile(job_id)
-          if os.path.exists(done_flag):
-            os.remove(done_flag)
+  lawTaskManager.save()
   return to_post_process, to_run_locally, stat.status
 
 def apply_action(action, tasks, task_selection, task_list_path):
@@ -260,8 +254,6 @@ def apply_action(action, tasks, task_selection, task_list_path):
     raise RuntimeError(f'Unknown action = "{action}"')
 
 def check_prerequisites(main_cfg):
-  # if 'CRABCLIENT_TYPE' not in os.environ or len(os.environ['CRABCLIENT_TYPE'].strip()) == 0:
-  #   raise RuntimeError("Crab environment is not set. Please source /cvmfs/cms.cern.ch/common/crab-setup.sh")
   voms_info = get_voms_proxy_info()
   if 'timeleft' not in voms_info or voms_info['timeleft'] < 1:
     raise RuntimeError('Voms proxy is not initalised or is going to expire soon.' + \
@@ -318,13 +310,15 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
   for name, task in tasks.items():
     task.checkConfigurationValidity()
 
+  lawTaskManager = LawTaskManager(os.path.join(work_area, 'law_tasks.json'))
+
   update_interval = main_cfg.get('updateInterval', 60)
   vomsToken = get_voms_proxy_info()['path']
   htmlUpdated = False
 
   while True:
     last_update = datetime.datetime.now()
-    to_post_process, to_run_locally, status = update(tasks, no_status_update=no_status_update)
+    to_post_process, to_run_locally, status = update(tasks, lawTaskManager, no_status_update=no_status_update)
 
     status_path = os.path.join(work_area, 'status.json')
     with(open(status_path, 'w')) as f:
@@ -351,25 +345,27 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
         print_ts("To run on local grid: " + ', '.join([ task.name for task in to_run_locally ]))
       if len(to_post_process) > 0:
         print_ts("Post-processing: " + ', '.join([ task.name for task in to_post_process ]))
+      print_ts(f"Total number of jobs to run on a local grid: {len(lawTaskManager.cfg)}")
       local_proc_params = main_cfg['localProcessing']
       law_sub_dir = os.path.join(abs_work_area, 'law', 'jobs')
-      law_task_dir = os.path.join(law_sub_dir, local_proc_params['lawTask'])
+      law_jobs_cfg = os.path.join(law_sub_dir, local_proc_params['lawTask'],
+                                  f'{local_proc_params["workflow"]}_jobs.json')
 
-      if os.path.exists(law_task_dir):
-        shutil.rmtree(law_task_dir)
-
+      lawTaskManager.update_grid_jobs(law_jobs_cfg)
       n_cpus = local_proc_params.get('nCPU', 1)
       max_runime = local_proc_params.get('maxRuntime', 24.0)
       max_parallel_jobs = local_proc_params.get('maxParallelJobs', 1000)
+      stop_date = last_update + datetime.timedelta(minutes=update_interval)
+      stop_date_str = stop_date.strftime('%Y-%m-%dT%H%M%S')
       cmd = [ 'law', 'run', local_proc_params['lawTask'],
               '--workflow', local_proc_params['workflow'],
               '--bootstrap-path', local_proc_params['bootstrap'],
               '--work-area', abs_work_area,
-              '--log-path', os.path.join(abs_work_area, 'law', 'logs'),
               '--sub-dir', law_sub_dir,
               '--n-cpus', str(n_cpus),
               '--max-runtime', str(max_runime),
               '--parallel-jobs', str(max_parallel_jobs),
+              '--stop-date', stop_date_str,
               '--transfer-logs',
       ]
       if 'requirements' in local_proc_params:
