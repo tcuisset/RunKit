@@ -144,6 +144,7 @@ def runJob(cmd_line_args):
   cfg_params = convertParams(PSet.process.exParams)
   cfg_params.maxEvents = PSet.process.maxEvents.input.value()
   jobModule = load(cfg_params.jobModule)
+  recoveryIndex = cfg_params.recoveryIndex
 
   outputs = []
   for output in cfg_params.output:
@@ -175,7 +176,10 @@ def runJob(cmd_line_args):
     file_id = datasetFiles[file] if datasetFiles else file_index
     for output in outputs:
       outputFileBase, outputExt = os.path.splitext(output['file'])
-      output['file_name'] = f'{outputFileBase}_{file_id}{outputExt}'
+      if recoveryIndex < 0:
+        output['file_name'] = f'{outputFileBase}_{file_id}{outputExt}'
+      else:
+        output['file_name'] = f'{outputFileBase}_{file_id}_{recoveryIndex}{outputExt}'
     result, exception = processFile(jobModule, file_id, file, outputs, cmd_line_args, cfg_params, voms_token)
     if result:
       has_at_least_one_success = True

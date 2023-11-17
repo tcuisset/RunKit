@@ -15,13 +15,13 @@ if __name__ == "__main__":
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
 from .run_tools import PsCallError, ps_call, natural_sort, timestamp_str, adler32sum
 from .grid_tools import get_voms_proxy_info, lfn_to_pfn, gfal_copy_safe, gfal_ls_safe, das_file_pfns, \
-                        gfal_copy, GfalError
+                        gfal_copy, GfalError, COPY_TMP_SUFFIX
 from .envToJson import get_cmsenv
 from .getFileRunLumi import getFileRunLumi
 
 class Task:
   _taskCfgProperties = [
-    'cmsswPython', 'params', 'splitting', 'unitsPerJob', 'scriptExe', 'filesToTransfer',
+    'cmsswPython', 'params', 'unitsPerJob', 'scriptExe', 'filesToTransfer',
     'lumiMask', 'maxMemory', 'numCores', 'inputDBS', 'allowNonValid',
     'vomsGroup', 'vomsRole', 'blacklist', 'whitelist', 'whitelistFinalRecovery', 'dryrun',
     'maxRecoveryCount', 'targetOutputFileSize', 'ignoreFiles', 'ignoreLocality', 'crabType'
@@ -44,7 +44,6 @@ class Task:
     self.inputDataset = ''
     self.cmsswPython = ''
     self.params = {}
-    self.splitting = ''
     self.unitsPerJob = -1
     self.scriptExe = ''
     self.filesToTransfer = []
@@ -72,13 +71,15 @@ class Task:
     self.taskIds = {}
     self.lastJobStatusUpdate = -1.
     self.cmsswEnv = None
-    self.singularity_cmd = os.environ.get('CMSSW_SINGULARITY', None)
     self.gridJobs = None
     self.crabType = ''
     self.processedFilesCache = None
     self.vomsToken = None
     self.startDate = ''
     self.endDate = ''
+    self.singularity_cmd = os.environ.get('CMSSW_SINGULARITY', None)
+    if self.singularity_cmd is not None and len(self.singularity_cmd) == 0:
+      self.singularity_cmd = None
 
   def checkConfigurationValidity(self):
     def check(cond, prop):
@@ -87,7 +88,7 @@ class Task:
     def check_len(prop):
       check(len(getattr(self, prop)) > 0, prop)
 
-    for prop in [ 'cmsswPython', 'splitting', 'inputDBS', 'name', 'inputDataset' ]:
+    for prop in [ 'cmsswPython', 'inputDBS', 'name', 'inputDataset' ]:
       check_len(prop)
     check(self.unitsPerJob > 0, 'unitsPerJob')
     check(self.maxMemory > 0, 'maxMemory')
@@ -167,6 +168,7 @@ class Task:
           output_list.append(output['skimSetupFailed'])
       output_str = 'output=' + ';'.join(output_list)
       params.append(output_str)
+    params.append(f'recoveryIndex={self.recoveryIndex}')
     if appendDatasetFiles:
       datasetFileDir, datasetFileName = os.path.split(self.getDatasetFilesPath())
       params.append(f'datasetFiles={datasetFileName}')
@@ -186,9 +188,7 @@ class Task:
     return max(self.unitsPerJob // (2 ** self.recoveryIndex), 1)
 
   def getSplitting(self):
-    if self.recoveryIndex > 0:
-      return 'FileBased'
-    return self.splitting
+    return 'FileBased'
 
   def getLumiMask(self):
     if self.recoveryIndex > 0:
@@ -196,12 +196,12 @@ class Task:
     return self.lumiMask
 
   def getMaxMemory(self):
-    if self.recoveryIndex == self.maxRecoveryCount:
+    if self.recoveryIndex >= self.maxRecoveryCount - 1:
       return max(self.maxMemory, 4000)
     return self.maxMemory
 
   def getWhiteList(self):
-    if self.recoveryIndex == self.maxRecoveryCount:
+    if self.recoveryIndex >= self.maxRecoveryCount - 1:
       return self.whitelistFinalRecovery
     return self.whitelist
 
@@ -209,7 +209,7 @@ class Task:
     return self.blacklist
 
   def getIgnoreLocality(self):
-    if self.recoveryIndex == self.maxRecoveryCount:
+    if self.recoveryIndex == self.maxRecoveryCount - 1:
       return True
     return self.ignoreLocality
 
@@ -389,9 +389,10 @@ class Task:
         hadd_report = json.load(f)
       report['outputs'] = {}
       for haddOutput, inputList in hadd_report.items():
-        report['outputs'][haddOutput] = []
+        report['outputs'][haddOutput] = {}
         for haddInput in inputList:
-          report['outputs'][haddOutput].append(haddInputs[haddInput])
+          origInput = haddInputs[haddInput]
+          report['outputs'][haddOutput][origInput] = self.getFileRunLumi()[origInput]
       report['processingEnd'] = timestamp_str()
 
       report_file =f'prodReport_{outputNameBase}.json'
@@ -400,11 +401,6 @@ class Task:
       with open(report_tmp_path, 'w') as f:
         json.dump(report, f, indent=2)
       gfal_copy_safe(report_tmp_path, report_final_path, self.getVomsToken(), verbose=1)
-
-    self.taskStatus.status = Status.PostProcessingFinished
-    self.endDate = timestamp_str()
-    self.saveStatus()
-    self.saveCfg()
 
   def getPostProcessingDoneFlagFile(self):
     return os.path.join(self.workArea, 'post_processing_done.txt')
@@ -421,14 +417,14 @@ class Task:
   def lastCrabStatusLog(self):
     return os.path.join(self.workArea, 'lastCrabStatus.txt')
 
-  def submit(self):
+  def submit(self, lawTaskManager=None):
     self.getDatasetFiles()
     if self.isInLocalRunMode():
       self.taskStatus = CrabTaskStatus()
-      self.taskStatus.status = Status.Submitted
+      self.taskStatus.status = Status.SubmittedToLocal
       self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
       self.taskStatus.status_on_scheduler = StatusOnScheduler.SUBMITTED
-      for job_id in self.getGridJobs():
+      for job_id in self.getGridJobs(lawTaskManager=lawTaskManager):
         self.taskStatus.details[str(job_id)] = { "State": "idle" }
       self.saveStatus()
       return True
@@ -449,15 +445,15 @@ class Task:
         raise e
       return False
 
-  def updateStatus(self):
+  def updateStatus(self, lawTaskManager=None):
     neen_local_run = False
     oldTaskStatus = self.taskStatus
     if self.isInLocalRunMode():
       self.taskStatus = CrabTaskStatus()
-      self.taskStatus.status = Status.Submitted
+      self.taskStatus.status = Status.SubmittedToLocal
       self.taskStatus.status_on_server = StatusOnServer.SUBMITTED
       self.taskStatus.status_on_scheduler = StatusOnScheduler.SUBMITTED
-      for job_id in self.getGridJobs():
+      for job_id in self.getGridJobs(lawTaskManager=lawTaskManager):
         job_flag_file = self.getGridJobDoneFlagFile(job_id)
         if os.path.exists(job_flag_file):
           with open(job_flag_file, 'r') as f:
@@ -507,7 +503,7 @@ class Task:
       self.saveCfg()
     return neen_local_run
 
-  def recover(self):
+  def recover(self, lawTaskManager=None):
     filesToProcess = self.getFilesToProcess()
     if len(filesToProcess) == 0:
       print(f'{self.name}: no recovery is needed. All files have been processed.')
@@ -523,7 +519,7 @@ class Task:
         self.jobInputFiles = None
         self.lastJobStatusUpdate = -1.
         self.saveCfg()
-        self.submit()
+        self.submit(lawTaskManager=lawTaskManager)
         return True
       else:
         return self.updateStatus()
@@ -556,7 +552,7 @@ class Task:
   def gridJobsFile(self):
     return os.path.join(self.workArea, 'grid_jobs.json')
 
-  def getGridJobs(self):
+  def getGridJobs(self, lawTaskManager=None):
     if not self.isInLocalRunMode():
       return {}
     if self.gridJobs is None:
@@ -564,6 +560,8 @@ class Task:
         with open(self.gridJobsFile(), 'r') as f:
           self.gridJobs = { int(key) : value for key,value in json.load(f).items() }
       else:
+        if lawTaskManager is None:
+          raise RuntimeError(f'{self.name}: lawTaskManager needs to be set to create grid jobs.')
         self.gridJobs = {}
         job_id = 0
         units_per_job = self.getUnitsPerJob()
@@ -576,6 +574,8 @@ class Task:
               break
             else:
               job_id += 1
+        for grid_job_id in self.gridJobs:
+          lawTaskManager.add(self.workArea, grid_job_id, self.getGridJobDoneFlagFile(grid_job_id))
         with open(self.gridJobsFile(), 'w') as f:
           json.dump(self.gridJobs, f, indent=2)
     return self.gridJobs
@@ -630,17 +630,26 @@ class Task:
     def collectOutputs(fileId):
       filePaths = {}
       for output in self.getOutputs():
-        fileName = f'{output["name"]}_{fileId}{output["ext"]}'
-        filePath = os.path.join(output['crabOutput'], fileName)
         if output["file"] not in ls_result:
           ls_result[output["file"]] = {}
           ls_files = gfal_ls_safe(output['crabOutput'], catch_stderr=True, voms_token=self.getVomsToken(), verbose=0)
           if ls_files is not None:
             for file_info in ls_files:
               ls_result[output["file"]][file_info.name] = file_info
-        if fileName not in ls_result[output["file"]]:
+        found = False
+        for recoveryIndex in range(-1, self.recoveryIndex + 1):
+          if recoveryIndex < 0:
+            fileName = f'{output["name"]}_{fileId}{output["ext"]}'
+          else:
+            fileName = f'{output["name"]}_{fileId}_{recoveryIndex}{output["ext"]}'
+          filePath = os.path.join(output['crabOutput'], fileName)
+          fileNameTmp = fileName + COPY_TMP_SUFFIX
+          if fileName in ls_result[output["file"]] and fileNameTmp not in ls_result[output["file"]]:
+            filePaths[output['file']] = filePath
+            found = True
+            break
+        if not found:
           return None
-        filePaths[output['file']] = filePath
       return filePaths
 
     if not useCacheOnly:

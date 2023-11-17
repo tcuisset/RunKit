@@ -6,14 +6,15 @@ class Status(Enum):
   Unknown = -1
   Defined = 0
   Submitted = 1
-  Bootstrapped = 2
-  TapeRecall = 3
-  InProgress = 4
-  WaitingForRecovery = 5
-  WaitingForLocalRecovery = 6
-  CrabFinished = 7
-  PostProcessingFinished = 8
-  Failed = 9
+  SubmittedToLocal = 2
+  Bootstrapped = 3
+  TapeRecall = 4
+  InProgress = 5
+  WaitingForRecovery = 6
+  WaitingForLocalRecovery = 7
+  CrabFinished = 8
+  PostProcessingFinished = 9
+  Failed = 10
 
 class StatusOnServer(Enum):
   QUEUED = 1
@@ -22,6 +23,7 @@ class StatusOnServer(Enum):
   KILLED = 4
   SUBMITFAILED = 5
   RESUBMITFAILED = 6
+  KILLFAILED = 7
 
 class StatusOnScheduler(Enum):
   SUBMITTED = 1
@@ -118,7 +120,8 @@ class LogEntryParser:
         task_status.status = Status.WaitingForRecovery
       if task_status.status_on_scheduler == StatusOnScheduler.COMPLETED:
         task_status.status = Status.CrabFinished
-      if task_status.status_on_server in [ StatusOnServer.SUBMITFAILED, StatusOnServer.RESUBMITFAILED ]:
+      if task_status.status_on_server in [ StatusOnServer.SUBMITFAILED, StatusOnServer.RESUBMITFAILED,
+                                           StatusOnServer.KILLFAILED ]:
         task_status.status = Status.WaitingForRecovery
     except RuntimeError as e:
       task_status.status = Status.Unknown
@@ -176,9 +179,9 @@ class LogEntryParser:
     while n < len(log_lines) - 1:
       n += 1
       line = log_lines[n].strip()
-      if len(line) == 0 or log_lines[n][0] != ' ':
-        break
-      text += f'\n{log_lines[n].strip()}'
+      if len(line) == 0: continue
+      if log_lines[n][0] not in [ ' ', '\t' ]: break
+      text += f'\n{line}'
     task_status.failure = CrabFailure(text)
     return n
 

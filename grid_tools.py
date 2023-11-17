@@ -11,6 +11,9 @@ if __name__ == "__main__":
 
 from .run_tools import ps_call, repeat_until_success, adler32sum, PsCallError
 
+COPY_TMP_SUFFIX = '.tmp'
+COPY_TMP_LOCAL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.gfal_copy_safe_tmp')
+
 class FileInfo:
   def __init__(self, name=None, path=None, size=None, date=None, is_dir=None):
     self.name = name
@@ -85,12 +88,11 @@ def xrd_copy(input_remote_file, output_local_file, n_retries=4, n_retries_xrdcp=
   else:
     optlist = [ ("", ) ]
 
-  repeat_until_success(download, opt_list=optlist, raise_error=True,
-                       error_message=f'Unable to copy {input_remote_file} from remote.', n_retries=n_retries,
-                       retry_sleep_interval=retry_sleep_interval, verbose=verbose)
+  repeat_until_success(download, opt_list=optlist, n_retries=n_retries, retry_sleep_interval=retry_sleep_interval,
+                       exception=GfalError(f'Unable to copy {input_remote_file} from remote.'), verbose=verbose)
 
 def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2, timeout=7200,
-                   expected_adler32sum=None, n_retries=4, retry_sleep_interval=10, verbose=1):
+                   expected_adler32sum=None, n_retries=4, retry_sleep_interval=10, copy_mode='copy_flag', verbose=1):
   if voms_token is None:
     voms_token = get_voms_proxy_info()['path']
   if expected_adler32sum is None:
@@ -99,24 +101,41 @@ def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2
     except GfalError as e:
       if verbose > 0:
         print(f'WARNING: gfal_sum failed for "{input_file}".\n{e}')
-  output_file_tmp = output_file + '.tmp'
+  if copy_mode not in ['copy_rename', 'copy_flag']:
+    raise RuntimeError(f'gfal_copy_safe: unknown copy mode "{copy_mode}".')
+  if copy_mode == 'copy_flag':
+    if not os.path.exists(COPY_TMP_LOCAL_FILE):
+      with open(COPY_TMP_LOCAL_FILE, 'w') as f:
+        f.write('0')
+  output_file_tmp = output_file + COPY_TMP_SUFFIX
+  output_file_sum_target = output_file if copy_mode == 'copy_flag' else output_file_tmp
   def download():
     if gfal_exists(output_file, voms_token=voms_token):
       gfal_rm(output_file, voms_token=voms_token, recursive=False)
     if gfal_exists(output_file_tmp, voms_token=voms_token):
       gfal_rm(output_file_tmp, voms_token=voms_token, recursive=False)
-    gfal_copy(input_file, output_file_tmp, voms_token=voms_token, number_of_streams=number_of_streams, timeout=timeout,
-              verbose=verbose)
-    output_adler32sum = gfal_sum(output_file_tmp, voms_token=voms_token, sum_type='adler32')
-    if expected_adler32sum is not None and output_adler32sum != expected_adler32sum:
-      raise GfalError(f'Failed adler32sum check for "{output_file_tmp}".'
-                      f' {output_adler32sum:x} != {expected_adler32sum:x}.')
-    gfal_rename(output_file_tmp, output_file, voms_token=voms_token)
-    if not gfal_exists(output_file, voms_token=voms_token):
-      raise GfalError(f'Failed to rename "{output_file_tmp}" to "{output_file}".')
+    if copy_mode == 'copy_flag':
+      gfal_copy(COPY_TMP_LOCAL_FILE, output_file_tmp, voms_token=voms_token, number_of_streams=number_of_streams,
+                timeout=timeout, verbose=verbose)
+      gfal_copy(input_file, output_file, voms_token=voms_token, number_of_streams=number_of_streams,
+                timeout=timeout, verbose=verbose)
+    elif copy_mode == 'copy_rename':
+      gfal_copy(input_file, output_file_tmp, voms_token=voms_token, number_of_streams=number_of_streams,
+                timeout=timeout, verbose=verbose)
+    if expected_adler32sum is not None:
+      output_adler32sum = gfal_sum(output_file_sum_target, voms_token=voms_token, sum_type='adler32')
+      if output_adler32sum != expected_adler32sum:
+        raise GfalError(f'Failed adler32sum check for "{output_file_sum_target}".'
+                        f' {output_adler32sum:x} != {expected_adler32sum:x}.')
+    if copy_mode == 'copy_flag':
+      gfal_rm(output_file_tmp, voms_token=voms_token, recursive=False)
+    elif copy_mode == 'copy_rename':
+      gfal_rename(output_file_tmp, output_file, voms_token=voms_token)
+      if not gfal_exists(output_file, voms_token=voms_token):
+        raise GfalError(f'Failed to rename "{output_file_tmp}" to "{output_file}".')
 
-  repeat_until_success(download, raise_error=True, error_message=f'Unable to copy "{input_file}" to "{output_file}".',
-                       n_retries=n_retries, retry_sleep_interval=retry_sleep_interval, verbose=verbose)
+  repeat_until_success(download, n_retries=n_retries, retry_sleep_interval=retry_sleep_interval, verbose=verbose,
+                       exception=GfalError(f'Unable to copy "{input_file}" to "{output_file}".'))
 
 def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, timeout=7200, verbose=1):
   if voms_token is None:
@@ -284,8 +303,8 @@ def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_
     else:
       raise RuntimeError('Skipping an unknown remote source "{pfns}".')
 
-  repeat_until_success(download, opt_list=[ (pfns, ) for pfns in pfns_list ], raise_error=True,
-                       error_message=f'Unable to copy {input_remote_file} from remote.', n_retries=n_retries,
+  repeat_until_success(download, opt_list=[ (pfns, ) for pfns in pfns_list ], n_retries=n_retries,
+                       exception=GfalError(f'Unable to copy {input_remote_file} from remote.'),
                        retry_sleep_interval=retry_sleep_interval, verbose=verbose)
 
 if __name__ == "__main__":
