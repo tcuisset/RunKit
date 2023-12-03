@@ -15,7 +15,7 @@ if __name__ == "__main__":
 from .crabTaskStatus import CrabTaskStatus, Status, JobStatus, LogEntryParser, StatusOnScheduler, StatusOnServer
 from .run_tools import PsCallError, ps_call, natural_sort, timestamp_str, adler32sum
 from .grid_tools import get_voms_proxy_info, lfn_to_pfn, gfal_copy_safe, gfal_ls_safe, das_file_pfns, \
-                        gfal_copy, GfalError, COPY_TMP_SUFFIX
+                        gfal_copy, GfalError, COPY_TMP_SUFFIX, gfal_exists, gfal_rm
 from .envToJson import get_cmsenv
 from .getFileRunLumi import getFileRunLumi
 
@@ -199,6 +199,11 @@ class Task:
     if self.recoveryIndex >= self.maxRecoveryCount - 1:
       return max(self.maxMemory, 4000)
     return self.maxMemory
+
+  def getMaxJobRuntime(self):
+    if self.recoveryIndex >= self.maxRecoveryCount - 1:
+      return 2 * 24
+    return 24
 
   def getWhiteList(self):
     if self.recoveryIndex >= self.maxRecoveryCount - 1:
@@ -405,8 +410,11 @@ class Task:
   def getPostProcessingDoneFlagFile(self):
     return os.path.join(self.workArea, 'post_processing_done.txt')
 
+  def getGridJobDoneFlagDir(self):
+    return os.path.join(self.workArea, 'grid_jobs_results')
+
   def getGridJobDoneFlagFile(self, job_id):
-    return os.path.join(self.workArea, 'grid_jobs_results', f'job_{job_id}.done')
+    return os.path.join(self.getGridJobDoneFlagDir(), f'job_{job_id}.done')
 
   def hasFailedJobs(self):
     return JobStatus.failed in self.taskStatus.job_stat
@@ -466,8 +474,25 @@ class Task:
         filesToProcess = self.getFilesToProcess()
         if len(filesToProcess) == 0:
           self.taskStatus.status = Status.CrabFinished
-      jobIds = self.selectJobIds([JobStatus.failed])
-      if len(jobIds) != 0:
+        else:
+          for file in filesToProcess:
+            file_found = False
+            iter_idx = 0
+            while (iter_idx < 2) and (not file_found):
+              for job_id, job_files in self.getGridJobs(lawTaskManager=lawTaskManager, forceUpdate=iter_idx>0).items():
+                if file in job_files:
+                  file_found = True
+                  done_flag = self.getGridJobDoneFlagFile(job_id)
+                  if os.path.exists(done_flag):
+                    print(f'{self.name}: job {job_id} is marked as finished, but no output file is found.'
+                          ' Removing the done flag and resubmitting the job.')
+                    os.remove(done_flag)
+                    break
+              iter_idx += 1
+            if not file_found:
+              raise RuntimeError(f'{self.name}: cannot find job for file "{file}"')
+      failedJobIds = self.selectJobIds([JobStatus.failed])
+      if len(jobIds) == len(failedJobIds) and len(failedJobIds) > 0:
         self.taskStatus.status = Status.Failed
       self.saveStatus()
       neen_local_run = self.taskStatus.status not in [ Status.CrabFinished, Status.Failed ]
@@ -520,9 +545,7 @@ class Task:
         self.lastJobStatusUpdate = -1.
         self.saveCfg()
         self.submit(lawTaskManager=lawTaskManager)
-        return True
-      else:
-        return self.updateStatus()
+      return self.updateStatus()
 
     jobIds = self.selectJobIds([JobStatus.finished], invert=True)
     lumiMask = self.getRepresentativeLumiMask(filesToProcess)
@@ -552,32 +575,38 @@ class Task:
   def gridJobsFile(self):
     return os.path.join(self.workArea, 'grid_jobs.json')
 
-  def getGridJobs(self, lawTaskManager=None):
+  def getGridJobs(self, lawTaskManager=None, forceUpdate=False):
     if not self.isInLocalRunMode():
       return {}
     if self.gridJobs is None:
       if os.path.exists(self.gridJobsFile()):
         with open(self.gridJobsFile(), 'r') as f:
           self.gridJobs = { int(key) : value for key,value in json.load(f).items() }
-      else:
-        if lawTaskManager is None:
-          raise RuntimeError(f'{self.name}: lawTaskManager needs to be set to create grid jobs.')
+    if forceUpdate or self.gridJobs is None:
+      if lawTaskManager is None:
+        raise RuntimeError(f'{self.name}: lawTaskManager needs to be set to create grid jobs.')
+      prev_files = set()
+      if self.gridJobs is None:
         self.gridJobs = {}
         job_id = 0
-        units_per_job = self.getUnitsPerJob()
-        for file in self.getFilesToProcess():
-          while True:
-            if job_id not in self.gridJobs:
-              self.gridJobs[job_id] = []
-            if len(self.gridJobs[job_id]) < units_per_job:
-              self.gridJobs[job_id].append(file)
-              break
-            else:
-              job_id += 1
-        for grid_job_id in self.gridJobs:
-          lawTaskManager.add(self.workArea, grid_job_id, self.getGridJobDoneFlagFile(grid_job_id))
-        with open(self.gridJobsFile(), 'w') as f:
-          json.dump(self.gridJobs, f, indent=2)
+      else:
+        job_id = max(self.gridJobs.keys()) + 1
+        prev_files.update(*self.gridJobs.values())
+      units_per_job = self.getUnitsPerJob()
+      for file in self.getFilesToProcess():
+        if file in prev_files: continue
+        while True:
+          if job_id not in self.gridJobs:
+            self.gridJobs[job_id] = []
+          if len(self.gridJobs[job_id]) < units_per_job:
+            self.gridJobs[job_id].append(file)
+            break
+          else:
+            job_id += 1
+      for grid_job_id in self.gridJobs:
+        lawTaskManager.add(self.workArea, grid_job_id, self.getGridJobDoneFlagFile(grid_job_id))
+      with open(self.gridJobsFile(), 'w') as f:
+        json.dump(self.gridJobs, f, indent=2)
     return self.gridJobs
 
   def runJobLocally(self, job_id, job_home):
@@ -614,9 +643,14 @@ class Task:
       ps_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv(),
               singularity_cmd=self.singularity_cmd)
 
-  def getProcessedFiles(self, useCacheOnly=False):
+  def getProcessedFiles(self, useCacheOnly=False, resetCache=False):
     cache_file = os.path.join(self.workArea, 'processed_files.json')
     has_changes = False
+    if resetCache:
+      self.processedFilesCache = None
+      if os.path.exists(cache_file):
+        os.remove(cache_file)
+
     if self.processedFilesCache is None:
       if os.path.exists(cache_file):
         with open(cache_file, 'r') as f:
@@ -686,11 +720,31 @@ class Task:
       return False
     return True
 
-  def checkFilesToProcess(self):
+  def resetGridJobs(self, file=None, lawTaskManager=None):
+    file_found = False
+    if file is not None:
+      for job_id, job_files in self.getGridJobs(lawTaskManager=lawTaskManager).items():
+        if file in job_files:
+          file_found = True
+          done_flag = self.getGridJobDoneFlagFile(job_id)
+          if os.path.exists(done_flag):
+            os.remove(done_flag)
+          break
+    if not file_found:
+      self.gridJobs = None
+      if os.path.exists(self.gridJobsFile()):
+        os.remove(self.gridJobsFile())
+      if os.path.exists(self.getGridJobDoneFlagDir()):
+        shutil.rmtree(self.getGridJobDoneFlagDir())
+      if len(self.getGridJobs(lawTaskManager=lawTaskManager)) == 0:
+        raise RuntimeError(f'{self.name}: unable to reset grid jobs')
+
+  def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False):
     filesToProcess = self.getFilesToProcess()
-    print(f'{self.name} dataset={self.inputDBS}')
+    print(f'dataset={self.inputDataset}')
     tmp_dir = tempfile.mkdtemp(dir=os.environ['TMPDIR'])
     pfnsPrefix = self.params.get('inputPFNSprefix', None)
+    has_status_changes = False
     for file in filesToProcess:
       file_out = os.path.join(tmp_dir, os.path.basename(file))
       print(f'  {file}')
@@ -701,23 +755,80 @@ class Task:
       else:
         sources, expected_adler32sum = das_file_pfns(file, disk_only=False, return_adler32=True,
                                                      inputDBS=self.inputDBS, verbose=0)
-      for pfn in sources:
-        ok = True
-        try:
-          gfal_copy(pfn, file_out, voms_token=self.getVomsToken(), verbose=0)
-          if expected_adler32sum is not None:
-            asum = adler32sum(file_out)
-            if asum != expected_adler32sum:
-              msg = f'adler32sum mismatch. Expected = {expected_adler32sum:x}, got = {asum:x}.'
+      has_at_least_one_valid_source = False
+      for pfn_type, pfn_list in sources.items():
+        for pfn in pfn_list:
+          ok = True
+          try:
+            if pfn_type == 'TAPE':
+              msg = 'no user access'
               ok = False
-        except GfalError as e:
-          msg = 'gfal-copy failed'
-          ok = False
-        if os.path.exists(file_out):
-          os.remove(file_out)
-        if ok:
-          msg = "OK"
-        print(f'    {pfn}: {msg}')
+            else:
+              gfal_copy(pfn, file_out, voms_token=self.getVomsToken(), verbose=0)
+              if expected_adler32sum is not None:
+                asum = adler32sum(file_out)
+                if asum != expected_adler32sum:
+                  msg = f'adler32sum mismatch. Expected = {expected_adler32sum:x}, got = {asum:x}.'
+                  ok = False
+          except GfalError as e:
+            msg = 'gfal-copy failed'
+            ok = False
+          if os.path.exists(file_out):
+            os.remove(file_out)
+          if ok:
+            msg = "OK"
+            has_at_least_one_valid_source = True
+          print(f'    {pfn}: type={pfn_type} {msg}')
+      if has_at_least_one_valid_source and resetStatus:
+        has_status_changes = True
+        self.resetGridJobs(file=file, lawTaskManager=lawTaskManager)
+        self.recoveryIndex = self.maxRecoveryCount
+        self.taskStatus.status = Status.SubmittedToLocal
+    if has_status_changes:
+      self.saveStatus()
+      self.saveCfg()
+
+  def checkProcessedFiles(self, lawTaskManager=None, resetStatus=False):
+    processedFiles = self.getProcessedFiles()
+    print(f'{self.name}: checking processed files...')
+    tmp_dir = tempfile.mkdtemp(dir=os.environ['TMPDIR'])
+
+    def check_file(file):
+      file_out = os.path.join(tmp_dir, 'tmp.root')
+      ok = True
+      try:
+        gfal_copy_safe(file, file_out, self.getVomsToken(), verbose=0)
+      except GfalError as e:
+        ok = False
+      if os.path.exists(file_out):
+        os.remove(file_out)
+      return ok
+
+    invalid_files = []
+    all_ok = True
+    for input_file, entry in sorted(processedFiles.items(), key=lambda x: x[1]['id']):
+      for output_file_name, output_file_path in entry['outputs'].items():
+        if not check_file(output_file_path):
+          invalid_files.append(output_file_path)
+          print(f'  {output_file_path}: invalid')
+          if resetStatus and gfal_exists(output_file_path, voms_token=self.getVomsToken()):
+            gfal_rm(output_file_path, voms_token=self.getVomsToken())
+        else:
+          print(f'  {output_file_path}: OK')
+
+    if len(invalid_files) > 0:
+      print(f'{self.name}: the following files are invalid: {", ".join(invalid_files)}')
+      if resetStatus:
+        self.getProcessedFiles(resetCache=True)
+        filesToProcess = self.getFilesToProcess()
+        if len(filesToProcess) == 0:
+          raise RuntimeError(f'{self.name}: unable to reset status.')
+        for file in filesToProcess:
+          self.resetGridJobs(file=file, lawTaskManager=lawTaskManager)
+        self.recoveryIndex = self.maxRecoveryCount
+        self.taskStatus.status = Status.SubmittedToLocal
+        self.saveStatus()
+        self.saveCfg()
 
   def updateConfig(self, mainCfg, taskCfg):
     taskName = self.name
