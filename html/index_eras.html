@@ -1,0 +1,132 @@
+<html>
+<head>
+    <title>Skim info</title>
+    <style>
+        h5.fixed {
+            position: fixed;
+            bottom: -10px;
+            left: 10px;
+        }
+        .total-row {
+            background-color: #808080;
+            font-weight: bold;
+        }
+        .table {
+            position:fixed;
+            top: 140px;
+            bottom: 25px;
+        }
+    </style>
+</head>
+<body>
+    <h2 align=center id="pageTitle"></h2>
+    <h4 id="configFiles">Config files: </h4>
+    <div class="table">
+        <div id="jsGrid"></div>
+    </div>
+
+    <link type="text/css" rel="stylesheet" href="jsgrid.css" />
+    <link type="text/css" rel="stylesheet" href="jsgrid-theme.css" />
+
+    <script src="jquery.min.js"></script>
+    <script type="text/javascript" src="jsgrid.min.js"></script>
+
+    <script>
+        function find_match(value, filter) {
+            if(filter == null || filter == undefined) return true;
+            var f_str = filter.toString().toLowerCase();
+            if(f_str.length == 0) return true;
+            if(value == null || value == undefined) return false;
+            var v_str = value.toString().toLowerCase();
+            return v_str.indexOf(f_str) > -1;
+        }
+
+        function UpdateColPos(cols) {
+            var left = $('.jsgrid-grid-body').scrollLeft() < $('.jsgrid-grid-body .jsgrid-table').width() - $('.jsgrid-grid-body').width() + 16
+                ? $('.jsgrid-grid-body').scrollLeft() : $('.jsgrid-grid-body .jsgrid-table').width() - $('.jsgrid-grid-body').width() + 16;
+            $('.jsgrid-header-row th:nth-child(-n+' + cols + '), .jsgrid-filter-row td:nth-child(-n+' + cols + '), .jsgrid-insert-row td:nth-child(-n+' + cols + '), .jsgrid-grid-body tr td:nth-child(-n+' + cols + ')')
+                .css({
+                    "position": "relative",
+                    "left": left
+                });
+        }
+
+        columns = [
+            { name: "era", title: "Era", type: "text", width: 50, editing: false },
+            { name: "location", title: "Location", type: "text", width: 200, editing: false },
+            { name: "info", title: "Info", type: "textarea", width: 50, editing: false,
+              itemTemplate: function(value) {
+                    var x = $("<a>");
+                    if (value != null && value != undefined && value.length > 0) {
+                        x.attr("href", value).attr("target", "_blank").text("link");
+                    }
+                    return x;
+                } },
+        ];
+        all_columns = columns.slice(0);
+
+        var xmlhttp = new XMLHttpRequest();
+        xmlhttp.onreadystatechange = function() {
+            if (this.readyState == 4 && this.status == 200) {
+                var data = JSON.parse(this.responseText);
+                $("#pageTitle").text(data["title"]);
+                for(var i = 0; i < data["config_files"].length; i++) {
+                    var x = $("<a>");
+                    x.attr("href", data["config_files"][i]).attr("target", "_blank").text(data["config_files"][i]);
+                    $("#configFiles").append(x);
+                    $("#configFiles").append(" ");
+                }
+                var db = {
+                    loadData: function(filter) {
+                        return $.grep(data["eras"], function(item) {
+                            for(var c = 0; c < columns.length; c++) {
+                                var c_name = columns[c]["name"];
+                                if(!find_match(item[c_name], filter[c_name])) return false;
+                            }
+                            return true;
+                        });
+                    },
+                };
+
+                var originalFilterTemplate = jsGrid.fields.text.prototype.filterTemplate;
+                jsGrid.fields.text.prototype.filterTemplate = function() {
+                    var grid = this._grid;
+                    var $result = originalFilterTemplate.call(this);
+                    $result.on("keyup", function(e) {
+                        if(this.timeout)
+                            clearTimeout(this.timeout);
+                        this.timeout = setTimeout(function(){
+                            grid.search();
+                        }, 300);
+                    });
+                    return $result;
+                };
+
+                $("#jsGrid").jsGrid({
+                    width: "100%",
+                    height: "100%",
+
+                    filtering: true,
+                    inserting: false,
+                    editing: false,
+                    sorting: true,
+                    paging: true,
+                    autoload: true,
+
+                    pageSize: 100,
+                    pageButtonCount: 10,
+                    controller: db,
+
+                    pagerFormat: "{itemCount} eras. Pages: {first} {prev} {pages} {next} {last}    {pageIndex} of {pageCount}",
+
+                    fields: all_columns,
+                });
+
+                $('.jsgrid-grid-body').scroll(function () { UpdateColPos(1); });
+            }
+        };
+        xmlhttp.open("GET", "eras.json", true);
+        xmlhttp.send();
+    </script>
+</body>
+</html>
