@@ -109,19 +109,23 @@ def gfal_copy_safe(input_file, output_file, voms_token=None, number_of_streams=2
         f.write('0')
   output_file_tmp = output_file + COPY_TMP_SUFFIX
   output_file_sum_target = output_file if copy_mode == 'copy_flag' else output_file_tmp
+  attempt = -1
   def download():
+    nonlocal attempt
+    attempt += 1
+    active_verbose = verbose + attempt if verbose > 0 else 0
     if gfal_exists(output_file, voms_token=voms_token):
       gfal_rm(output_file, voms_token=voms_token, recursive=False)
     if gfal_exists(output_file_tmp, voms_token=voms_token):
       gfal_rm(output_file_tmp, voms_token=voms_token, recursive=False)
     if copy_mode == 'copy_flag':
       gfal_copy(COPY_TMP_LOCAL_FILE, output_file_tmp, voms_token=voms_token, number_of_streams=number_of_streams,
-                timeout=timeout, verbose=verbose)
+                timeout=timeout, verbose=active_verbose)
       gfal_copy(input_file, output_file, voms_token=voms_token, number_of_streams=number_of_streams,
-                timeout=timeout, verbose=verbose)
+                timeout=timeout, verbose=active_verbose)
     elif copy_mode == 'copy_rename':
       gfal_copy(input_file, output_file_tmp, voms_token=voms_token, number_of_streams=number_of_streams,
-                timeout=timeout, verbose=verbose)
+                timeout=timeout, verbose=active_verbose)
     if expected_adler32sum is not None:
       output_adler32sum = gfal_sum(output_file_sum_target, voms_token=voms_token, sum_type='adler32')
       if output_adler32sum != expected_adler32sum:
@@ -142,10 +146,13 @@ def gfal_copy(input_file, output_file, voms_token=None, number_of_streams=2, tim
     voms_token = get_voms_proxy_info()['path']
   try:
     catch_output = verbose == 0
-    ps_call([ 'gfal-copy', '--parent', '--nbstreams', str(number_of_streams), '--timeout', str(timeout),
-                input_file, output_file ],
-              shell=False, env={'X509_USER_PROXY': voms_token}, verbose=verbose,
-              catch_stdout=catch_output, catch_stderr=catch_output)
+    cmd = [ 'gfal-copy', '--parent', '--nbstreams', str(number_of_streams), '--timeout', str(timeout) ]
+    if verbose > 1:
+      n_v = min(3, verbose-1)
+      cmd.append('-' + 'v' * n_v)
+    cmd.extend([ input_file, output_file ])
+    ps_call(cmd, shell=False, env={'X509_USER_PROXY': voms_token}, verbose=verbose,
+            catch_stdout=catch_output, catch_stderr=catch_output)
   except PsCallError as e:
     raise GfalError(f'gfal_copy: unable to copy "{input_file}" to "{output_file}"\n{e}')
 
@@ -249,33 +256,33 @@ def das_file_site_info(file, inputDBS='global', verbose=0):
 
 def das_file_pfns(file, disk_only=True, return_adler32=False, inputDBS='global', verbose=0):
   site_info = das_file_site_info(file, inputDBS=inputDBS, verbose=verbose)
-  pfns_disk = set()
-  pfns_other = set()
+  pfns_all = {}
   adler32 = None
   for entry in site_info:
     if "site" not in entry: continue
     for site in entry["site"]:
       if "pfns" not in site: continue
       for pfns_link, pfns_info in site["pfns"].items():
-        if pfns_info.get("type", None) == "DISK":
-          pfns_disk.add(pfns_link)
-        else:
-          pfns_other.add(pfns_link)
+        pnfs_type = pfns_info.get("type", 'UNKNOWN')
+        if pnfs_type not in pfns_all:
+          pfns_all[pnfs_type] = set()
+        pfns_all[pnfs_type].add(pfns_link)
       if "adler32" in site:
         site_adler32 = int(site["adler32"], 16)
         if adler32 is not None and adler32 != site_adler32:
           raise RuntimeError(f"Inconsistent adler32 sum for {file}")
         adler32 = site_adler32
-  pfns = list(pfns_disk)
-  if not disk_only:
-    pfns = list(pfns_disk) + list(pfns_other)
+  if disk_only:
+    pfns = pfns_all.get('DISK', set())
+  else:
+    pfns = pfns_all
   if return_adler32:
     return pfns, adler32
   return pfns
 
 def copy_remote_file(input_remote_file, output_local_file, inputDBS='global', n_retries=4, retry_sleep_interval=10,
                      custom_pfns_prefix='', voms_token=None, verbose=1):
-  pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=False, return_adler32=True, inputDBS=inputDBS,
+  pfns_list, adler32 = das_file_pfns(input_remote_file, disk_only=True, return_adler32=True, inputDBS=inputDBS,
                                      verbose=verbose)
   if voms_token is None:
     voms_token = get_voms_proxy_info()['path']
