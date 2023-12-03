@@ -1,9 +1,33 @@
 import json
 import sys
+import yaml
 from run_tools import ps_call
 
 if __name__ == '__main__':
-  for dataset in sys.argv[1:]:
+  datasets = []
+  all_ok = True
+  for entry in sys.argv[1:]:
+    if entry.endswith('.yaml'):
+      with open(entry, 'r') as f:
+        cfg = yaml.safe_load(f)
+      for task_name, task_desc in cfg.items():
+        if task_name == 'config': continue
+        customTask = type(task_desc) == dict
+        if customTask:
+          if 'inputDataset' not in task_desc:
+            print(f'ERROR: "{entry}" task "{task_name}" does not have "inputDataset" field.')
+            inputDataset = None
+            all_ok = False
+          else:
+            inputDataset = task_desc['inputDataset']
+        else:
+          inputDataset = task_desc
+    else:
+      inputDataset = entry
+    if inputDataset is not None:
+      datasets.append(inputDataset)
+
+  for dataset in datasets:
     try:
       if dataset.endswith("USER"): # Embedded samples
         _, output, _ = ps_call(['dasgoclient', '--json', '--query', f'dataset dataset={dataset} instance=prod/phys03'],
@@ -27,12 +51,19 @@ if __name__ == '__main__':
         for ds_info in ds_infos:
           if len(ds_info) != 1:
             print(f'multiple info: {dataset}')
+            all_ok = False
           if status is not None and status != ds_info[0]['status']:
             print(f'inconsistent status: {dataset}')
             inconsistent_status = True
+            all_ok = False
             break
           status = ds_info[0]['status']
         if not inconsistent_status and status != "VALID":
           print(f'not valid: {dataset}')
+          all_ok = False
     except:
       print(f'query_failed: {dataset}')
+      all_ok = False
+  if all_ok:
+    print("All datasets exist.")
+
