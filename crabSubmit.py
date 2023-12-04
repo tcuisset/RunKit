@@ -32,6 +32,7 @@ def submit(task: Task):
   config.JobType.inputFiles = task.getFilesToTransfer()
   config.JobType.disableAutomaticOutputCollection = True
   config.JobType.pyCfgParams = task.getParams()
+  config.JobType.maxJobRuntimeMin = task.getMaxJobRuntime() * 60 - 1
 
   config.Data.inputDBS = task.inputDBS
   config.Data.allowNonValidInputDataset = task.allowNonValid

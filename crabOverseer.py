@@ -15,7 +15,7 @@ from .crabTaskStatus import JobStatus, Status
 from .crabTask import Task
 from .crabLaw import LawTaskManager
 from .run_tools import PsCallError, ps_call, print_ts, timestamp_str
-from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn
+from .grid_tools import get_voms_proxy_info, gfal_copy_safe, lfn_to_pfn, gfal_rm, gfal_exists
 
 class TaskStat:
   summary_only_thr = 10
@@ -40,7 +40,9 @@ class TaskStat:
   def add(self, task):
     self.all_tasks.append(task)
 
-    n_files_total, n_files_processed, n_files_to_process, n_files_ignored = task.getFilesStats(useCacheOnly=False)
+    useCacheOnly = task.taskStatus.status in [ Status.CrabFinished, Status.PostProcessingFinished, Status.Failed ]
+    n_files_total, n_files_processed, n_files_to_process, n_files_ignored = \
+      task.getFilesStats(useCacheOnly=useCacheOnly)
     self.n_files_total += n_files_total
     self.n_files_to_process += n_files_to_process
     self.n_files_processed += n_files_processed
@@ -134,7 +136,7 @@ class TaskStat:
       print(f"Failed tasks that require manual intervention: {', '.join(names)}")
 
 def sanity_checks(task):
-  abnormal_inactivity_thr = 24
+  abnormal_inactivity_thr = task.getMaxJobRuntime() + 1
 
   if task.taskStatus.status == Status.InProgress:
     delta_t = task.getTimeSinceLastJobStatusUpdate()
@@ -204,52 +206,78 @@ def update(tasks, lawTaskManager, no_status_update=False):
   lawTaskManager.save()
   return to_post_process, to_run_locally, stat.status
 
-def apply_action(action, tasks, task_selection, task_list_path):
-  selected_tasks = []
-  for task_name, task in tasks.items():
-    if task_selection is None or eval(task_selection):
-      selected_tasks.append(task)
-
+def apply_action(action, tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken):
   if action == 'print':
-    for task in selected_tasks:
+    for task_name, task in selected_tasks.items():
       print(task.name)
   elif action.startswith('run_cmd'):
     cmd = action[len('run_cmd') + 1:]
-    for task in selected_tasks:
+    for task_name, task in selected_tasks.items():
       exec(cmd)
       task.saveCfg()
       task.saveStatus()
   elif action == 'list_files_to_process':
-    for task in selected_tasks:
+    for task_name, task in selected_tasks.items():
       print(f'{task.name}: files to process')
       for file in task.getFilesToProcess():
         print(f'  {file}')
-  elif action == 'check_failed':
+  elif action in ['check_failed', 'check_update_failed']:
     print('Checking files availability for failed tasks...')
-    for task in selected_tasks:
+    resetStatus = action == 'check_update_failed'
+    for task_name, task in selected_tasks.items():
       if task.taskStatus.status == Status.Failed:
-        task.checkFilesToProcess()
+        task.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=resetStatus)
+    if resetStatus:
+      lawTaskManager.save()
+  elif action in ['check_processed', 'check_update_processed']:
+    print('Checking output files for finished but not yet post-processed tasks...')
+    resetStatus = action == 'check_update_processed'
+    for task_name, task in selected_tasks.items():
+      if task.taskStatus.status == Status.CrabFinished:
+        task.checkProcessedFiles(lawTaskManager=lawTaskManager, resetStatus=resetStatus)
+    if resetStatus:
+      lawTaskManager.save()
+  elif action == 'reset_local_jobs':
+    for task_name, task in selected_tasks.items():
+      if task.taskStatus.status in [ Status.Failed, Status.SubmittedToLocal ]:
+        print(f'{task.name}: resetting local jobs...')
+        task.gridJobs = None
+        for file in [ task.gridJobsFile(), task.getGridJobDoneFlagDir() ]:
+          if os.path.exists(file):
+            if os.path.isfile(file):
+              os.remove(file)
+            else:
+              shutil.rmtree(file)
+        task.recoveryIndex = task.maxRecoveryCount
+        task.taskStatus.status = Status.SubmittedToLocal
+        task.saveStatus()
+        task.saveCfg()
+  elif action in [ 'remove_crab_output', 'remove_final_output' ]:
+    output_names = {
+      'remove_crab_output': 'crabOutput',
+      'remove_final_output': 'finalOutput',
+    }
+    output_name = output_names[action]
+    for task_name, task in selected_tasks.items():
+      for output in task.getOutputs():
+        output_path = output[output_name]
+        if gfal_exists(output_path, voms_token=vomsToken):
+          print(f'{task.name}: removing {output_name} "{output_path}"...')
+          gfal_rm(output_path, voms_token=vomsToken, recursive=True, verbose=0)
   elif action == 'kill':
-    for task in selected_tasks:
+    for task_name, task in selected_tasks.items():
       print(f'{task.name}: sending kill request...')
       try:
         task.kill()
       except PsCallError as e:
         print(f'{task.name}: error sending kill request. {e}')
   elif action == 'remove':
-    for task in selected_tasks:
+    for task_name, task in selected_tasks.items():
       print(f'{task.name}: removing...')
       shutil.rmtree(task.workArea)
       del tasks[task.name]
     with open(task_list_path, 'w') as f:
       json.dump([task_name for task_name in tasks], f, indent=2)
-  elif action == 'remove_final_output':
-    for task in selected_tasks:
-      for output in task.getOutputs():
-        task_output = output['finalOutput']
-        print(f'{task.name}: removing final output "{task_output}"...')
-        if os.path.exists(task_output):
-          shutil.rmtree(task_output)
   else:
     raise RuntimeError(f'Unknown action = "{action}"')
 
@@ -261,8 +289,46 @@ def check_prerequisites(main_cfg):
   if 'localProcessing' not in main_cfg or 'LAW_HOME' not in os.environ:
     raise RuntimeError("Law environment is not setup. It is needed to run the local processing step.")
 
+def load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_cfg):
+  tasks = {}
+  created_tasks = set()
+  updated_tasks = set()
+  if os.path.isfile(task_list_path):
+    with open(task_list_path, 'r') as f:
+      task_names = json.load(f)
+      for task_name in task_names:
+        tasks[task_name] = Task.Load(mainWorkArea=work_area, taskName=task_name)
+  if len(new_task_list_files) > 0:
+    task_list_changed = False
+    for task_list_file in new_task_list_files:
+      with open(task_list_file, 'r') as f:
+        new_tasks = yaml.safe_load(f)
+      for task_name in new_tasks:
+        if task_name == 'config': continue
+        if task_name in tasks:
+          if update_cfg:
+            tasks[task_name].updateConfig(main_cfg, new_tasks)
+            updated_tasks.add(task_name)
+        else:
+          tasks[task_name] = Task.Create(work_area, main_cfg, new_tasks, task_name)
+          created_tasks.add(task_name)
+          task_list_changed = True
+    if task_list_changed:
+      with open(task_list_path, 'w') as f:
+        json.dump(list(sorted(tasks.keys())), f, indent=2)
+  if len(created_tasks) > 0:
+    print(f'Created tasks: {", ".join(created_tasks)}')
+  if update_cfg:
+    if len(updated_tasks) > 0:
+      print(f'Configuration updated for tasks: {", ".join(updated_tasks)}')
+    not_updated = set(tasks.keys()) - created_tasks - updated_tasks
+    if len(not_updated) > 0:
+      print(f'Configuration not updated for tasks: {", ".join(not_updated)}')
+  return tasks
+
 def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status_update=False,
-                  update_cfg=False, no_loop=False, task_selection=None, action=None):
+                  update_cfg=False, no_loop=False, task_selection=None, task_selected_names=None,
+                  task_selected_status=None, action=None):
   if not os.path.exists(work_area):
     os.makedirs(work_area)
   abs_work_area = os.path.abspath(work_area)
@@ -275,45 +341,30 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
     main_cfg = yaml.safe_load(f)
 
   check_prerequisites(main_cfg)
+
   task_list_path = os.path.join(work_area, 'tasks.json')
-  tasks = {}
-  if os.path.isfile(task_list_path):
-    with open(task_list_path, 'r') as f:
-      task_names = json.load(f)
-      for task_name in task_names:
-        tasks[task_name] = Task.Load(mainWorkArea=work_area, taskName=task_name)
-  if len(new_task_list_files) > 0:
-    for task_list_file in new_task_list_files:
-      with open(task_list_file, 'r') as f:
-        new_tasks = yaml.safe_load(f)
-      for task_name in new_tasks:
-        if task_name == 'config': continue
-        if task_name in tasks:
-          if update_cfg:
-            tasks[task_name].updateConfig(main_cfg, new_tasks)
-        else:
-          tasks[task_name] = Task.Create(work_area, main_cfg, new_tasks, task_name)
-    with open(task_list_path, 'w') as f:
-      json.dump(list(tasks.keys()), f, indent=2)
+  all_tasks = load_tasks(work_area, task_list_path, new_task_list_files, main_cfg, update_cfg)
 
-  if action is not None:
-    apply_action(action, tasks, task_selection, task_list_path)
-    return
-
-  if task_selection is not None:
-    selected_tasks = {}
-    for task_name, task in tasks.items():
-      if eval(task_selection):
-        selected_tasks[task_name] = task
-    tasks = selected_tasks
-
-  for name, task in tasks.items():
-    task.checkConfigurationValidity()
+  selected_tasks = {}
+  for task_name, task in all_tasks.items():
+    pass_selection = task_selection is None or eval(task_selection)
+    pass_name_selection = task_selected_names is None or task.name in task_selected_names
+    pass_status_selection = task_selected_status is None or task.taskStatus.status in task_selected_status
+    if pass_selection and pass_name_selection and pass_status_selection:
+      selected_tasks[task_name] = task
 
   lawTaskManager = LawTaskManager(os.path.join(work_area, 'law_tasks.json'))
-
-  update_interval = main_cfg.get('updateInterval', 60)
   vomsToken = get_voms_proxy_info()['path']
+
+  for name, task in selected_tasks.items():
+    task.checkConfigurationValidity()
+
+  if action is not None:
+    apply_action(action, all_tasks, selected_tasks, task_list_path, lawTaskManager, vomsToken)
+    return
+
+  tasks = selected_tasks
+  update_interval = main_cfg.get('updateInterval', 60)
   htmlUpdated = False
 
   while True:
@@ -370,6 +421,15 @@ def overseer_main(work_area, cfg_file, new_task_list_files, verbose=1, no_status
       ]
       if 'requirements' in local_proc_params:
         cmd.extend(['--requirements', local_proc_params['requirements']])
+      if len(all_tasks) != len(tasks):
+        task_work_areas = []
+        for task in to_run_locally + to_post_process:
+          task_work_areas.append(task.workArea)
+        selected_branches = lawTaskManager.select_branches(task_work_areas)
+        if len(selected_branches) == 0:
+          raise RuntimeError("No branches are selected for local processing.")
+        branches_str = ','.join([ str(branch) for branch in selected_branches ])
+        cmd.extend(['--branches', branches_str])
       ps_call(cmd)
       for task in to_post_process + to_run_locally:
         task.updateStatusFromFile()
@@ -405,11 +465,23 @@ if __name__ == "__main__":
   parser.add_argument('--no-loop', action="store_true", help="Run task update once and exit.")
   parser.add_argument('--select', required=False, type=str, default=None,
                       help="select tasks to which apply an action. Default: select all.")
+  parser.add_argument('--select-names', required=False, type=str, default=None,
+                      help="select tasks with given names (use a comma separated list for multiple names)")
+  parser.add_argument('--select-status', required=False, type=str, default=None,
+                      help="select tasks with given status (use a comma separated list for multiple status)")
   parser.add_argument('--action', required=False, type=str, default=None,
                       help="apply action on selected tasks and exit")
   parser.add_argument('--verbose', required=False, type=int, default=1, help="verbosity level")
   parser.add_argument('task_file', type=str, nargs='*', help="file(s) with task descriptions")
   args = parser.parse_args()
 
+  selected_names = args.select_names.split(',') if args.select_names is not None else None
+  selected_status = None
+  if args.select_status is not None:
+    selected_status = set()
+    for status in args.select_status.split(','):
+      selected_status.add(Status[status])
+
   overseer_main(args.work_area, args.cfg, args.task_file, verbose=args.verbose, no_status_update=args.no_status_update,
-                update_cfg=args.update_cfg, no_loop=args.no_loop, task_selection=args.select, action=args.action)
+                update_cfg=args.update_cfg, no_loop=args.no_loop, task_selection=args.select,
+                task_selected_names=selected_names, task_selected_status=selected_status, action=args.action)

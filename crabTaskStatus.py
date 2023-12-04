@@ -42,6 +42,7 @@ class CrabFailureCategory(Enum):
   CannotLocateFile = 1
 
 class JobStatus(Enum):
+  unknown = -1
   unsubmitted = 0
   idle = 1
   cooloff = 2
@@ -376,7 +377,8 @@ class CrabTaskStatus:
   def get_job_status(self):
     jobs = {}
     for job_id, job_stat in self.details.items():
-      status = JobStatus[job_stat["State"]]
+      state_str = job_stat["State"]
+      status = JobStatus[state_str] if len(state_str) > 0 else JobStatus.unknown
       jobs[job_id] = status
     return jobs
 
