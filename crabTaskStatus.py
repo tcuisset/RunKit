@@ -326,6 +326,7 @@ class LogEntryParser:
     "Failure message from server:": failure,
     "{": details,
     "The task failed to bootstrap on the Grid scheduler": bootstrap_failed,
+    "Rucio client intialized for account": "account"
   }
   error_summary_end = "Have a look at https://twiki.cern.ch/twiki/bin/viewauth/CMSPublic/JobExitCodes for a description of the exit codes."
   status_will_be_available = "Status information will be available within a few minutes"
@@ -352,9 +353,10 @@ class CrabTaskStatus:
     self.crab_log_file = None
     self.run_stat = {}
     self.details = {}
+    self.account = None
 
   _string_fields = [ 'log_lines', 'parse_error', 'project_dir', 'task_name', 'grid_scheduler', 'task_worker',
-                     'task_url', 'dashboard_url', 'crab_log_file' ]
+                     'task_url', 'dashboard_url', 'crab_log_file', 'account' ]
   _enum_fields = [ 'status', 'status_on_server', 'status_on_scheduler' ]
   _int_fields = [ 'n_jobs_total' ]
 
