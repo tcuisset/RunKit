@@ -1,7 +1,13 @@
 import os
 import yaml
 
-def check_consistency(task_cfg_files):
+class CheckResult:
+  def __init__(self, all_ok, tasks_by_name, tasks_by_dataset):
+    self.all_ok = all_ok
+    self.tasks_by_name = tasks_by_name
+    self.tasks_by_dataset = tasks_by_dataset
+
+def check_consistency_era(task_cfg_files):
   tasks_by_name = {}
   tasks_by_dataset = {}
   all_ok = True
@@ -21,6 +27,7 @@ def check_consistency(task_cfg_files):
       print(f'ERROR: "{task_cfg_file}" contains {type(cfg)}, while dict is expected.')
       all_ok = False
       continue
+    is_data = cfg.get('config', {}).get('params', {}).get('sampleType', '') == 'data'
     for task_name, task_desc in cfg.items():
       if task_name == 'config': continue
       customTask = type(task_desc) == dict
@@ -38,6 +45,7 @@ def check_consistency(task_cfg_files):
         'name': task_name,
         'inputDataset': inputDataset,
         'file': task_cfg_file,
+        'isData': is_data,
       }
       if task_name not in tasks_by_name:
         tasks_by_name[task_name] = []
@@ -58,15 +66,53 @@ def check_consistency(task_cfg_files):
         print(f'  file={task_entry["file"]} task={task_entry["name"]}')
       all_ok = False
 
+  return CheckResult(all_ok, tasks_by_name, tasks_by_dataset)
+
+def check_consistency(era_files_dict):
+  era_results = {}
+  tasks_by_name = {}
+  all_ok = True
+  for era, files in era_files_dict.items():
+    era_results[era] = check_consistency_era(files)
+    all_ok = all_ok and era_results[era].all_ok
+    for task_name in era_results[era].tasks_by_name.keys():
+      if task_name not in tasks_by_name:
+        tasks_by_name[task_name] = []
+      tasks_by_name[task_name].append(era)
+
+  n_eras = len(era_files_dict)
+  all_eras = set(era_files_dict.keys())
+  for task_name, eras in tasks_by_name.items():
+    is_data = era_results[eras[0]].tasks_by_name[task_name][0]['isData']
+    if len(eras) != n_eras and not is_data:
+      missing_eras = all_eras - set(eras)
+      missing_eras_str = ', '.join(missing_eras)
+      print(f'{task_name} is not available in: {missing_eras_str}')
+      for era in eras:
+        for task in era_results[era].tasks_by_name[task_name]:
+          print(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
+      all_ok = False
   return all_ok
 
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Check consistency of tasks configurations for crabOverseer.')
+  parser.add_argument('--cross-eras', action='store_true', help='Check consistency of tasks across different eras.')
   parser.add_argument('task_file', type=str, nargs='+', help="file(s) with task descriptions")
   args = parser.parse_args()
 
-  all_ok = check_consistency(args.task_file)
+  era_files_dict = {}
+  if args.cross_eras:
+    for era_dir in args.task_file:
+      era_name = os.path.basename(era_dir)
+      era_files_dict[era_name] = []
+      for root, dirs, files in os.walk(era_dir):
+        task_files = [os.path.join(root, f) for f in files if f.endswith('.yaml')]
+        era_files_dict[era_name].extend(task_files)
+  else:
+    era_files_dict[''] = args.task_file
+
+  all_ok = check_consistency(era_files_dict)
   if all_ok:
     print("All checks are successfully passed.")
   else:
