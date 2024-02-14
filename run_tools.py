@@ -11,7 +11,7 @@ from threading import Timer
 
 class PsCallError(RuntimeError):
   def __init__(self, cmd_str, return_code, additional_message=None):
-    msg = f'Error while running "{cmd_str}."'
+    msg = f'Error while running "{cmd_str}".'
     if return_code is not None:
       msg += f' Error code: {return_code}'
     if additional_message is not None:
@@ -23,18 +23,26 @@ class PsCallError(RuntimeError):
 
 def ps_call(cmd, shell=False, catch_stdout=False, catch_stderr=False, decode=True, split=None, print_output=False,
             expected_return_codes=[0], env=None, cwd=None, timeout=None, singularity_cmd=None, verbose=0):
+  if isinstance(cmd, str):
+    cmd = [ cmd ]
+  if shell:
+    if not (isinstance(cmd, list) and len(cmd) == 1):
+      raise ValueError('cmd must be a string or a list with a single element when shell=True')
   if singularity_cmd is not None:
-    full_cmd = [ singularity_cmd, '--command-to-run' ]
+    if not shell:
+      raise ValueError('singularity_cmd can only be used with shell=True')
+    env_str = ''
     if env is not None:
-      full_cmd.extend([ 'env', '-i' ])
-      for key, value in env.items():
-        full_cmd.append(f'{key}={value}')
-    full_cmd.extend(cmd)
+      env_str = ''
+      for key in [ 'PATH', 'LD_LIBRARY_PATH' ]:
+        if key in env:
+          env_str += f'{key}="{env[key]}" '
+    full_cmd = [ f"{singularity_cmd} --command-to-run '{env_str}{cmd[0]}'"]
   else:
     full_cmd = cmd
   cmd_str = []
   for s in cmd:
-    if ' ' in s:
+    if ' ' in s and not shell:
       s = f"'{s}'"
     cmd_str.append(s)
   cmd_str = ' '.join(cmd_str)

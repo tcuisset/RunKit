@@ -14,8 +14,8 @@ def get_env(script, python_cmd='python3', singularity_cmd=None):
 
   cmd = f'{script}; echo {magic_str}; {python_cmd} -c "import json, os; print(json.dumps(dict(os.environ)))"'
   if singularity_cmd:
-    cmd = f"{singularity_cmd} --command-to-run env -i bash -c '{cmd}'"
-  returncode, output, err = ps_call([cmd], shell=True, env={}, catch_stdout=True, split='\n')
+    cmd = f"{singularity_cmd} --command-to-run '{cmd}'"
+  returncode, output, err = ps_call([cmd], shell=True, env={}, catch_stdout=True, split='\n', verbose=0)
   for n, line in enumerate(output):
     if line == magic_str:
       break

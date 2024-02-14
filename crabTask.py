@@ -232,6 +232,9 @@ class Task:
       self.cmsswEnv['HOME'] = os.environ['HOME'] if 'HOME' in os.environ else self.workArea
       if 'KRB5CCNAME' in os.environ:
         self.cmsswEnv['KRB5CCNAME'] = os.environ['KRB5CCNAME']
+      for var in [ 'BASH_FUNC_cmsrel%%', 'BASH_FUNC_cmsenv%%' ]:
+        if var in self.cmsswEnv:
+          del self.cmsswEnv[var]
     return self.cmsswEnv
 
   def getVomsToken(self):
@@ -442,7 +445,7 @@ class Task:
         print(f'{self.name}: submitting ...')
       try:
         timeout = None if self.dryrun else Task.crabOperationTimeout
-        ps_call(['python3', crabSubmitPath, self.workArea], timeout=timeout, env=self.getCmsswEnv(),
+        ps_call(f'python3 {crabSubmitPath} {self.workArea}', shell=True, timeout=timeout, env=self.getCmsswEnv(),
                 singularity_cmd=self.singularity_cmd)
         self.taskStatus.status = Status.Submitted
         self.saveStatus()
@@ -497,7 +500,7 @@ class Task:
       self.saveStatus()
       neen_local_run = self.taskStatus.status not in [ Status.CrabFinished, Status.Failed ]
     else:
-      returncode, output, err = ps_call(['crab', 'status', '--json', '-d', self.crabArea()],
+      returncode, output, err = ps_call(f'crab status --json -d {self.crabArea()}', shell=True, verbose=0,
                                         catch_stdout=True, split='\n', timeout=Task.crabOperationTimeout,
                                         env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
       self.taskStatus = LogEntryParser.Parse(output)
@@ -625,9 +628,10 @@ class Task:
       if len(file_list) > 0:
         file_list = ','.join(file_list)
         cmd.append(f'inputFiles={file_list}')
-        ps_call(cmd, cwd=job_home, env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd, verbose=1)
+        cmd = ' '.join(cmd)
+        ps_call(cmd, cwd=job_home, shell=True, env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd, verbose=1)
         _, scriptName = os.path.split(self.scriptExe)
-        ps_call([ 'sh', os.path.join(job_home, scriptName) ], cwd=job_home, env=self.getCmsswEnv(),
+        ps_call(os.path.join(job_home, scriptName), shell=True, cwd=job_home, env=self.getCmsswEnv(),
                 singularity_cmd=self.singularity_cmd, verbose=1)
       return True
     except:
@@ -640,7 +644,7 @@ class Task:
     if self.isInLocalRunMode():
       print(f'{self.name}: cannot kill a task with local jobs.')
     else:
-      ps_call(['crab', 'kill', '-d', self.crabArea()], timeout=Task.crabOperationTimeout, env=self.getCmsswEnv(),
+      ps_call(f'crab kill -d {self.crabArea()}', shell=True, timeout=Task.crabOperationTimeout, env=self.getCmsswEnv(),
               singularity_cmd=self.singularity_cmd)
 
   def getProcessedFiles(self, useCacheOnly=False, resetCache=False):
@@ -742,7 +746,7 @@ class Task:
   def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False):
     filesToProcess = self.getFilesToProcess()
     print(f'dataset={self.inputDataset}')
-    tmp_dir = tempfile.mkdtemp(dir=os.environ['TMPDIR'])
+    tmp_dir = tempfile.mkdtemp(dir=os.environ.get('TMPDIR', '/tmp'))
     pfnsPrefix = self.params.get('inputPFNSprefix', None)
     has_status_changes = False
     for file in filesToProcess:
@@ -791,7 +795,7 @@ class Task:
   def checkProcessedFiles(self, lawTaskManager=None, resetStatus=False):
     processedFiles = self.getProcessedFiles()
     print(f'{self.name}: checking processed files...')
-    tmp_dir = tempfile.mkdtemp(dir=os.environ['TMPDIR'])
+    tmp_dir = tempfile.mkdtemp(dir=os.environ.get('TMPDIR', '/tmp'))
 
     def check_file(file):
       file_out = os.path.join(tmp_dir, 'tmp.root')
