@@ -229,6 +229,11 @@ def apply_action(action, tasks, selected_tasks, task_list_path, lawTaskManager, 
         task.checkFilesToProcess(lawTaskManager=lawTaskManager, resetStatus=resetStatus)
     if resetStatus:
       lawTaskManager.save()
+  elif action == 'ignore_failed':
+    print('Ignoring missing files in failed tasks...')
+    for task_name, task in selected_tasks.items():
+      if task.taskStatus.status == Status.Failed:
+        task.ignoreMissingFiles(lawTaskManager=lawTaskManager)
   elif action in ['check_processed', 'check_update_processed']:
     print('Checking output files for finished but not yet post-processed tasks...')
     resetStatus = action == 'check_update_processed'

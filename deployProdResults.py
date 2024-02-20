@@ -246,6 +246,7 @@ def deploy_prod_results(cfg_file, era, dry_run=False):
     print_ts(f'{task_name} added.')
 
   print(f'Total number of tasks: {len(cfg["tasks"])}')
+  missing_tasks = natural_sort(missing_tasks)
   print(f'Missing {len(missing_tasks)} tasks: {", ".join(missing_tasks)}')
 
 if __name__ == "__main__":

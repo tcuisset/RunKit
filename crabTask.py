@@ -623,7 +623,8 @@ class Task:
         shutil.copy(os.path.join(ana_path, file), job_home)
       cmd = [ 'python3', os.path.join(ana_path, self.cmsswPython), f'datasetFiles={self.getDatasetFilesPath()}',
               'writePSet=True', 'mustProcessAllInputs=True' ]
-      cmd.extend(self.getParams(appendDatasetFiles=False))
+      for param in self.getParams(appendDatasetFiles=False):
+        cmd.append(f'"{param}"')
       file_list = [ file for file in self.getGridJobs()[job_id] if file not in self.ignoreFiles ]
       if len(file_list) > 0:
         file_list = ','.join(file_list)
@@ -644,8 +645,14 @@ class Task:
     if self.isInLocalRunMode():
       print(f'{self.name}: cannot kill a task with local jobs.')
     else:
-      ps_call(f'crab kill -d {self.crabArea()}', shell=True, timeout=Task.crabOperationTimeout, env=self.getCmsswEnv(),
-              singularity_cmd=self.singularity_cmd)
+      try:
+        ps_call(f'crab kill -d {self.crabArea()}', shell=True, timeout=Task.crabOperationTimeout,
+                env=self.getCmsswEnv(), singularity_cmd=self.singularity_cmd)
+      except PsCallError as e:
+        print(f'{self.name}: error sending kill request. {e}')
+        print(f'{self.name}: setting status to WaitingForRecovery.')
+        self.taskStatus.status = Status.WaitingForRecovery
+        self.saveStatus()
 
   def getProcessedFiles(self, useCacheOnly=False, resetCache=False):
     cache_file = os.path.join(self.workArea, 'processed_files.json')
@@ -724,7 +731,7 @@ class Task:
       return False
     return True
 
-  def resetGridJobs(self, file=None, lawTaskManager=None):
+  def resetGridJobs(self, file=None, lawTaskManager=None, expect_at_least_one_job=True):
     file_found = False
     if file is not None:
       for job_id, job_files in self.getGridJobs(lawTaskManager=lawTaskManager).items():
@@ -740,7 +747,7 @@ class Task:
         os.remove(self.gridJobsFile())
       if os.path.exists(self.getGridJobDoneFlagDir()):
         shutil.rmtree(self.getGridJobDoneFlagDir())
-      if len(self.getGridJobs(lawTaskManager=lawTaskManager)) == 0:
+      if expect_at_least_one_job and len(self.getGridJobs(lawTaskManager=lawTaskManager)) == 0:
         raise RuntimeError(f'{self.name}: unable to reset grid jobs')
 
   def checkFilesToProcess(self, lawTaskManager=None, resetStatus=False):
@@ -791,6 +798,18 @@ class Task:
     if has_status_changes:
       self.saveStatus()
       self.saveCfg()
+
+  def ignoreMissingFiles(self, lawTaskManager=None):
+    filesToProcess = self.getFilesToProcess()
+    if len(filesToProcess) == 0:
+      return
+    self.ignoreFiles = list(set(self.ignoreFiles) | set(filesToProcess))
+    print(f'{self.name}: ignoring missing files: ' + ', '.join(filesToProcess))
+    self.resetGridJobs(lawTaskManager=lawTaskManager, expect_at_least_one_job=False)
+    self.recoveryIndex = self.maxRecoveryCount
+    self.taskStatus.status = Status.SubmittedToLocal
+    self.saveStatus()
+    self.saveCfg()
 
   def checkProcessedFiles(self, lawTaskManager=None, resetStatus=False):
     processedFiles = self.getProcessedFiles()
