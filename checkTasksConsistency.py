@@ -68,7 +68,7 @@ def check_consistency_era(task_cfg_files):
 
   return CheckResult(all_ok, tasks_by_name, tasks_by_dataset)
 
-def check_consistency(era_files_dict):
+def check_consistency(era_files_dict, exceptions):
   era_results = {}
   tasks_by_name = {}
   all_ok = True
@@ -85,19 +85,23 @@ def check_consistency(era_files_dict):
   for task_name, eras in tasks_by_name.items():
     is_data = era_results[eras[0]].tasks_by_name[task_name][0]['isData']
     if len(eras) != n_eras and not is_data:
-      missing_eras = all_eras - set(eras)
-      missing_eras_str = ', '.join(missing_eras)
-      print(f'{task_name} is not available in: {missing_eras_str}')
-      for era in eras:
-        for task in era_results[era].tasks_by_name[task_name]:
-          print(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
-      all_ok = False
+      known_exceptions = exceptions.get(task_name, [])
+      missing_eras = all_eras - set(eras) - set(known_exceptions)
+      if len(missing_eras) > 0:
+        missing_eras_str = ', '.join(missing_eras)
+        print(f'{task_name} is not available in: {missing_eras_str}')
+        for era in eras:
+          for task in era_results[era].tasks_by_name[task_name]:
+            print(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
+        all_ok = False
   return all_ok
 
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Check consistency of tasks configurations for crabOverseer.')
   parser.add_argument('--cross-eras', action='store_true', help='Check consistency of tasks across different eras.')
+  parser.add_argument('--exceptions', type=str, required=False, default=None,
+                      help='File with exceptions for the checks.')
   parser.add_argument('task_file', type=str, nargs='+', help="file(s) with task descriptions")
   args = parser.parse_args()
 
@@ -112,7 +116,13 @@ if __name__ == "__main__":
   else:
     era_files_dict[''] = args.task_file
 
-  all_ok = check_consistency(era_files_dict)
+  exceptions = {}
+  if args.exceptions:
+    with open(args.exceptions) as f:
+      exceptions = yaml.safe_load(f)
+
+
+  all_ok = check_consistency(era_files_dict, exceptions)
   if all_ok:
     print("All checks are successfully passed.")
   else:
