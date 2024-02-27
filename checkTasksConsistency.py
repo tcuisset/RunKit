@@ -94,6 +94,19 @@ def check_consistency(era_files_dict, exceptions):
           for task in era_results[era].tasks_by_name[task_name]:
             print(f'  era={era} file={task["file"]} dataset={task["inputDataset"]}')
         all_ok = False
+    else:
+      file_names = {}
+      for era in eras:
+        for task in era_results[era].tasks_by_name[task_name]:
+          file_name = os.path.split(task['file'])[1]
+          if file_name not in file_names:
+            file_names[file_name] = []
+          file_names[file_name].append(era)
+      if len(file_names) > 1:
+        print(f'{task_name} is defined in multiple files:')
+        for file_name, eras in file_names.items():
+          print(f'  {file_name} in {", ".join(eras)}')
+        all_ok = False
   return all_ok
 
 if __name__ == "__main__":
