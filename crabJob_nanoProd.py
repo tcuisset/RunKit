@@ -17,6 +17,7 @@ def processFile(input_file, outputs, tmp_files, cmssw_report, cmd_line_args, cfg
   if debug:
     if len(cmd_line_args) > 1:
       run_cmsDriver = cmd_line_args[1] == 'True'
+  assert(len(outputs) > 0)
 
   cmsRun_out = 'cmsRun_out.root'
   cmsDriver_py = 'nano_NANO.py'
@@ -60,12 +61,12 @@ def processFile(input_file, outputs, tmp_files, cmssw_report, cmd_line_args, cfg
 
   skim_tree_path = os.path.join(os.path.dirname(__file__), 'skim_tree.py')
   for output in outputs:
-    if len(output['skim_cfg']) > 0:
+    if len(output.get('skim_cfg', '')) > 0:
       cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output['file_name'],
                 '--config', output['skim_cfg'], '--setup', output['skim_setup'], '--skip-empty', '--verbose', '1']
       ps_call(cmd_line, verbose=1)
 
-      if len(output['skim_setup_failed']) > 0:
+      if len(output.get('skim_setup_failed', '')) > 0:
         cmd_line = ['python3', '-u', skim_tree_path, '--input', cmsRun_out, '--output', output['file_name'],
                     '--config', output['skim_cfg'], '--setup', output['skim_setup_failed'],
                     '--skip-empty', '--update-output', '--verbose', '1']
