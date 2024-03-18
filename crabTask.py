@@ -255,16 +255,24 @@ class Task:
         if self.isInputDatasetLocal():
           print(f'{self.name}: Gathering dataset files ...')
           ds_path = self.inputDataset[len('local:'):]
-          if not os.path.exists(ds_path):
-            raise RuntimeError(f'{self.name}: unable to find local dataset path "{ds_path}"')
+          # if not os.path.exists(ds_path):
+          #   raise RuntimeError(f'{self.name}: unable to find local dataset path "{ds_path}"')
           self.datasetFiles = {}
-          all_files = []
-          for subdir, dirs, files in os.walk(ds_path):
-            for file in files:
-              if file.endswith('.root') and not file.startswith('.'):
-                all_files.append('file:' + os.path.join(subdir, file))
-          for file_id, file_path in enumerate(natural_sort(all_files)):
-            self.datasetFiles[file_path] = file_id
+          # all_files = []
+          # for subdir, dirs, files in os.walk(ds_path):
+          #   for file in files:
+          #     if file.endswith('.root') and not file.startswith('.'):
+          #       all_files.append('file:' + os.path.join(subdir, file))
+          # from XRootD import client
+          # from XRootD.client.flags import DirListFlags, OpenFlags, MkDirFlags, QueryCode
+          # myclient = client.FileSystem('root://eos.grif.fr')
+          import subprocess
+          res = subprocess.run("gfal-ls '" + ds_path + "'", shell=True, env={}, stdout=subprocess.PIPE, check=True, text=True)
+          for file_id, filename in enumerate(natural_sort(res.stdout.splitlines())):
+            self.datasetFiles[os.path.join(ds_path, filename)] = file_id
+
+          # for file_id, file_path in enumerate(natural_sort(all_files)):
+          #   self.datasetFiles[file_path] = file_id
         else:
           self.datasetFiles = {}
           for file_id, file in enumerate(natural_sort(self.getFileRunLumi().keys())):

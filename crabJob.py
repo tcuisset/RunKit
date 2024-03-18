@@ -106,7 +106,7 @@ def processFile(jobModule, file_id, input_file, outputs, cmd_line_args, params, 
   tmp_files = []
   exception = None
   try:
-    if input_file.startswith('file:') or not params.copyInputsToLocal:
+    if True or input_file.startswith('file:') or not params.copyInputsToLocal:
       module_input_file = input_file
       local_file = None
     else:
